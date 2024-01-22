@@ -157,11 +157,12 @@ packages:
   quick_usb:
     dependency: transitive
     description:
-      name: quick_usb
-      sha256: "409367b9923fbf54259477df685d4a73b521490747b62d5241bd51ed47fbabec"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.4.0"
+      path: "."
+      ref: HEAD
+      resolved-ref: feb0e7b6db7faec57ba21c13a83e9faadf1f5cfa
+      url: "https://github.com/abuharsky/quick_usb.git"
+    source: git
+    version: "0.0.1"
   sky_engine:
     dependency: transitive
     description: flutter
@@ -241,4 +242,4 @@ packages:
     version: "0.3.0"
 sdks:
   dart: ">=3.2.0 <4.0.0"
-  flutter: ">=2.5.0"
+  flutter: ">=3.3.0"

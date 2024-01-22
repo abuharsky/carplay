@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:quick_usb/quick_usb.dart';
@@ -6,6 +7,11 @@ import 'log.dart';
 
 class UsbManagerWrapper {
   static init() async {
+    // for some reason it doesnt work automatically with generated dart tool
+    if (Platform.isMacOS) {
+      QuickUsbMacos.registerWith();
+    }
+
     log('USB Manager init');
     await QuickUsb.init();
   }
