@@ -1,4 +1,4 @@
 log(String s) {
   // ignore: avoid_print
-  if (true) print(s);
+  if (true) print("${DateTime.now().toString()} > $s");
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:carplay/carplay.dart';
 import 'package:convert/convert.dart';
 import 'package:dart_buffer/dart_buffer.dart';
 
@@ -61,8 +62,8 @@ class Dongle {
 
     _readLoop();
 
-    _heartBeat = Timer.periodic(const Duration(seconds: 2), (timer) {
-      send(HeartBeat());
+    _heartBeat = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      await send(HeartBeat());
     });
   }
 
@@ -77,7 +78,11 @@ class Dongle {
     try {
       final data = message.serialise();
 
-      log('[SEND] msg:${message.type.name} ${(message is SendCommand ? (message as SendCommand).value.name : "")}, length: ${data.length}, \ndata: ${hex.encode(data)}');
+      if (EXTENDED_LOG) {
+        log('[SEND] ${message.type.name} ${(message is SendCommand ? (message as SendCommand).value.name : "")}, length: ${data.length}, \ndata: ${hex.encode(data)}');
+      } else {
+        log('[SEND] ${message.type.name} ${(message is SendCommand ? (message as SendCommand).value.name : "")}');
+      }
 
       final length = await _usbDevice.write(data);
 
@@ -93,7 +98,6 @@ class Dongle {
 
   _readLoop() async {
     const MAX_ERROR_COUNT = 5;
-
     var errorCount = 0;
 
     while (_usbDevice.isOpened) {
@@ -101,7 +105,7 @@ class Dongle {
       if (errorCount >= MAX_ERROR_COUNT) {
         close();
         _errorHandler();
-        return;
+        return false;
       }
 
       try {
@@ -120,7 +124,7 @@ class Dongle {
 
           if (extraDataRes.length < header.length) {
             log('Failed to read extra data');
-            return;
+            return false;
           }
 
           extraData = extraDataRes.buffer.asByteData();
@@ -140,7 +144,11 @@ class Dongle {
             dataStr = 'VideoData';
           }
 
-          log("[RECV] msg: ${message.header.type.name} ${(message is Command ? message.value.name : "")}, header: ${hex.encode(headerData)},\nextraData length: ${extraData.lengthInBytes}, data: ${dataStr}");
+          if (EXTENDED_LOG) {
+            log("[RECV] ${message.header.type.name} ${(message is Command ? message.value.name : "")}, header: ${hex.encode(headerData)},\nextraData length: ${extraData.lengthInBytes}, data: ${dataStr}");
+          } else {
+            log("[RECV] ${message.header.type.name} ${(message is Command ? message.value.name : "")}, length: ${extraData.lengthInBytes}");
+          }
 
           // print(
           //     '[RECV] headerData length: ${header.length}, data: ${hex.encode(headerData)}');
@@ -164,6 +172,8 @@ class Dongle {
 
         errorCount++;
       }
+
+      return _usbDevice.isOpened;
     }
   }
 }

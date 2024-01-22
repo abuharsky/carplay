@@ -8,6 +8,8 @@ import 'log.dart';
 // ignore: constant_identifier_names
 const USB_WAIT_PERIOD_MS = 3000;
 
+const EXTENDED_LOG = false;
+
 class Carplay {
   Timer? _pairTimeout;
   Timer? _frameInterval;
@@ -105,8 +107,8 @@ class Carplay {
       final interval = phoneTypeConfig?["frameInterval"];
       if (interval != null) {
         _frameInterval =
-            Timer.periodic(Duration(milliseconds: interval), (timer) {
-          _dongleDriver?.send(SendCommand(CommandMapping.frame));
+            Timer.periodic(Duration(milliseconds: interval), (timer) async {
+          await _dongleDriver?.send(SendCommand(CommandMapping.frame));
         });
       }
 
@@ -155,7 +157,9 @@ class Carplay {
   }
 
   _clearFrameInterval() {
-    _frameInterval?.cancel();
-    _frameInterval = null;
+    if (_frameInterval != null) {
+      _frameInterval?.cancel();
+      _frameInterval = null;
+    }
   }
 }
