@@ -6,10 +6,10 @@
 
 #include "generated_plugin_registrant.h"
 
-#include <quick_usb/quick_usb_plugin.h>
+#include <carplay/carplay_plugin.h>
 
 void fl_register_plugins(FlPluginRegistry* registry) {
-  g_autoptr(FlPluginRegistrar) quick_usb_registrar =
-      fl_plugin_registry_get_registrar_for_plugin(registry, "QuickUsbPlugin");
-  quick_usb_plugin_register_with_registrar(quick_usb_registrar);
+  g_autoptr(FlPluginRegistrar) carplay_registrar =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "CarplayPlugin");
+  carplay_plugin_register_with_registrar(carplay_registrar);
 }

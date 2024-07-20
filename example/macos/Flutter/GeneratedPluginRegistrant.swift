@@ -5,8 +5,8 @@
 import FlutterMacOS
 import Foundation
 
-import quick_usb
+import carplay
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
-  QuickUsbPlugin.register(with: registry.registrar(forPlugin: "QuickUsbPlugin"))
+  CarplayPlugin.register(with: registry.registrar(forPlugin: "CarplayPlugin"))
 }

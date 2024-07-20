@@ -1,26 +1,79 @@
 import 'dart:async';
 
-import 'dongle_driver.dart';
-import 'usb_device_wrapper.dart';
+import 'package:carplay/carplay_platform_interface.dart';
+import 'package:flutter/foundation.dart';
+
+import 'driver/dongle_driver.dart';
+import 'driver/sendable.dart';
+import 'driver/readable.dart';
+import 'driver/usb/usb_device_wrapper.dart';
 import 'common.dart';
-import 'log.dart';
 
 // ignore: constant_identifier_names
 const USB_WAIT_PERIOD_MS = 3000;
 
-const EXTENDED_LOG = false;
+enum CarplayState {
+  disconnected,
+  connecting,
+  deviceConnected,
+  streaming,
+}
+
+class CarplayMediaInfo {
+  final String? songTitle;
+  final String? songArtist;
+  final String? albumName;
+  final String? appName;
+  final Uint8List? albumCoverImageData;
+
+  CarplayMediaInfo(
+      {required this.songTitle,
+      required this.songArtist,
+      required this.albumName,
+      required this.appName,
+      required this.albumCoverImageData});
+}
 
 class Carplay {
   Timer? _pairTimeout;
   Timer? _frameInterval;
 
-  final DongleConfig _config;
-
   Dongle? _dongleDriver;
 
-  final Function(Message) _messageHandler;
+  CarplayState state = CarplayState.connecting;
 
-  Carplay(this._config, this._messageHandler);
+  bool _connectedOverWifi = false;
+
+  late final DongleConfig _config;
+
+  late final Function(int?) _textureHandler;
+  late final Function(String)? _logHandler;
+  late final Function()? _hostUIHandler;
+  late final Function(CarplayState)? _stateHandler;
+  late final Function(CarplayMediaInfo mediaInfo)? _metadataHandler;
+
+  Carplay({
+    required DongleConfig config,
+    required Function(int? textureId) onTextureChanged,
+    Function(CarplayState)? onStateChanged,
+    Function(CarplayMediaInfo)? onMediaInfoChanged,
+    Function(String)? onLogMessage,
+    Function()? onHostUIPressed,
+  }) {
+    _config = config;
+    _textureHandler = onTextureChanged;
+    _metadataHandler = onMediaInfoChanged;
+    _stateHandler = onStateChanged;
+    _logHandler = onLogMessage;
+    _hostUIHandler = onHostUIPressed;
+
+    CarplayPlatform.setLogHandler(_logHandler);
+
+    // create texture
+    CarplayPlatform.instance
+        .createTexture(_config.width, _config.height)
+        .then(_textureHandler);
+  }
 
   Future<UsbDeviceWrapper> _findDevice() async {
     UsbDeviceWrapper? device;
@@ -31,11 +84,12 @@ class Carplay {
             await UsbManagerWrapper.lookupForUsbDevice(knownDevices);
         device = deviceList.firstOrNull;
       } catch (err) {
+        _log(err.toString());
         // ^ requestDevice throws an error when no device is found, so keep retrying
       }
 
       if (device == null) {
-        log('No device found, retrying');
+        _log('No device found, retrying');
         await Future.delayed(const Duration(milliseconds: USB_WAIT_PERIOD_MS));
       }
     }
@@ -43,7 +97,26 @@ class Carplay {
     return device;
   }
 
+  _setState(CarplayState newState) {
+    if (state != newState) {
+      state = newState;
+      if (_stateHandler != null) {
+        _stateHandler(state);
+      }
+    }
+  }
+
   start() async {
+    _setState(CarplayState.connecting);
+
+    if (_dongleDriver != null) {
+      await stop();
+    }
+
+    _connectedOverWifi = false;
+
+    await CarplayPlatform.instance.resetH264Renderer();
+
     // Find device to "reset" first
     var device = await _findDevice();
 
@@ -54,30 +127,28 @@ class Carplay {
     // so subsequent writes fail with LIBUSB_ERROR_NO_DEVICE
     // or LIBUSB_TRANSFER_ERROR
 
-    log('Reset device, finding again...');
+    _log('Reset device, finding again...');
     await Future.delayed(const Duration(milliseconds: USB_WAIT_PERIOD_MS));
     // ^ Device disappears after reset for 1-3 seconds
 
     device = await _findDevice();
-    log('found & opening');
+    _log('found & opening');
 
-    _dongleDriver = Dongle(device, _handleDongleMessage, _handleDongleError);
+    _dongleDriver =
+        Dongle(device, _handleDongleMessage, _handleDongleError, _log);
 
-    try {
-      await device.open();
+    await device.open();
+    await _dongleDriver?.start();
 
-      await _dongleDriver?.start();
+    _clearPairTimeout();
+    _pairTimeout = Timer(const Duration(seconds: 15), () async {
+      await _dongleDriver?.send(SendCommand(CommandMapping.wifiPair));
+    });
+  }
 
-      _pairTimeout = Timer(const Duration(seconds: 15), () {
-        _dongleDriver?.send(SendCommand(CommandMapping.wifiPair));
-      });
-    } catch (e) {
-      log(e.toString());
-
-      log('carplay not initialised, retrying in 2s');
-
-      await Future.delayed(const Duration(seconds: 2), start);
-    }
+  restart() async {
+    await stop();
+    await Future.delayed(const Duration(seconds: 2), start);
   }
 
   stop() async {
@@ -86,19 +157,34 @@ class Carplay {
       _clearFrameInterval();
       await _dongleDriver?.close();
     } catch (err) {
-      log(err.toString());
+      _log(err.toString());
     }
+
+    _setState(CarplayState.disconnected);
   }
 
-  sendKey(CommandMapping action) {
-    _dongleDriver?.send(SendCommand(action));
+  Future<bool> sendKey(CommandMapping action) {
+    return _dongleDriver!.send(SendCommand(action));
   }
 
-  sendTouch(TouchAction type, int x, int y) {
-    _dongleDriver?.send(SendTouch(type, x, y));
+  Future<bool> sendTouch(TouchAction type, double x, double y) {
+    return _dongleDriver!
+        .send(SendTouch(type, x / _config.width, y / _config.height));
   }
 
-  _handleDongleMessage(Message message) {
+  Future<bool> sendMultiTouch(List<TouchItem> touches) {
+    return _dongleDriver!.send(SendMultiTouch(touches));
+  }
+
+  //------------------------------
+  // Private
+  //------------------------------
+
+  _log(String message) {
+    _logHandler?.call(message);
+  }
+
+  _handleDongleMessage(Message message) async {
     if (message is Plugged) {
       _clearPairTimeout();
       _clearFrameInterval();
@@ -111,21 +197,38 @@ class Carplay {
           await _dongleDriver?.send(SendCommand(CommandMapping.frame));
         });
       }
+      _setState(CarplayState.deviceConnected);
+    }
+    //
+    else if (message is Unplugged) {
+      await restart();
+    }
+    //
+    else if (message is VideoData) {
+      _clearPairTimeout();
 
-      _messageHandler(message);
-    } else if (message is Unplugged) {
-      _messageHandler(message);
-    } else if (message is VideoData) {
+      if (state != CarplayState.streaming) {
+        _setState(CarplayState.streaming);
+      }
+    }
+    //
+    else if (message is AudioData) {
       _clearPairTimeout();
-      _messageHandler(message);
-    } else if (message is AudioData) {
+    }
+    //
+    else if (message is MediaData) {
       _clearPairTimeout();
-      _messageHandler(message);
-    } else if (message is MediaData) {
-      _clearPairTimeout();
-      _messageHandler(message);
-    } else if (message is Command) {
-      _messageHandler(message);
+      _processMediaMetadata(message.payload);
+    }
+    //
+    else if (message is Command) {
+      if (message.value == CommandMapping.requestHostUI) {
+        _hostUIHandler?.call();
+      } else if (message.value == CommandMapping.wifiConnected) {
+        _connectedOverWifi = true;
+      } else if (message.value == CommandMapping.wifiDisconnected) {
+        restart();
+      }
     }
 
     // Trigger internal event logic
@@ -147,8 +250,11 @@ class Carplay {
   }
 
   _handleDongleError({String? error}) async {
-    await stop();
-    await start();
+    _clearPairTimeout();
+    _clearFrameInterval();
+
+    // restart
+    await restart();
   }
 
   _clearPairTimeout() {
@@ -157,9 +263,75 @@ class Carplay {
   }
 
   _clearFrameInterval() {
-    if (_frameInterval != null) {
-      _frameInterval?.cancel();
-      _frameInterval = null;
+    _frameInterval?.cancel();
+    _frameInterval = null;
+  }
+
+  ///////////////
+
+  String? _lastMediaLyrics;
+  String? _lastMediaArtistName;
+  String? _lastMediaSongName;
+  String? _lastMediaAlbumName;
+  String? _lastMediaAPPName;
+  Uint8List? _lastAlbumCover;
+
+  _processMediaMetadata(Map<String, dynamic> metadata) {
+    // final mdata = metadata;
+    if (metadata.length == 1 && metadata.keys.contains("MediaSongPlayTime")) {
+      // skip timing
+    } else {
+      final String? mediaLyrics = metadata["MediaLyrics"];
+      final String? mediaArtistName = metadata["MediaArtistName"];
+      final String? mediaSongName = metadata["MediaSongName"];
+      final String? mediaAlbumName = metadata["MediaAlbumName"];
+      final String? mediaAPPName = metadata["MediaAPPName"];
+      final Uint8List? albumCover = metadata["AlbumCover"];
+
+      // on app name or lyrics update - reset
+      if (mediaAPPName != null ||
+          (mediaLyrics != null && _lastMediaLyrics != mediaLyrics))
+      //
+      {
+        _lastMediaLyrics = null;
+        _lastMediaSongName = null;
+
+        _lastMediaArtistName = null;
+        _lastMediaAlbumName = null;
+
+        _lastAlbumCover = null;
+      }
+
+      if (mediaAPPName != null && mediaAPPName.isNotEmpty) {
+        _lastMediaAPPName = mediaAPPName;
+      }
+      if (mediaArtistName != null && mediaArtistName.isNotEmpty) {
+        _lastMediaArtistName = mediaArtistName;
+      }
+      if (mediaSongName != null && mediaSongName.isNotEmpty) {
+        _lastMediaSongName = mediaSongName;
+      }
+      if (mediaAlbumName != null && mediaAlbumName.isNotEmpty) {
+        _lastMediaAlbumName = mediaAlbumName;
+      }
+      if (mediaLyrics != null && mediaLyrics.isNotEmpty) {
+        _lastMediaLyrics = mediaLyrics;
+      }
+      if (albumCover != null) {
+        _lastAlbumCover = albumCover;
+      }
+
+      if (_metadataHandler != null) {
+        _metadataHandler(
+          CarplayMediaInfo(
+            songTitle: (_lastMediaLyrics ?? _lastMediaSongName) ?? " ",
+            songArtist: _lastMediaArtistName ?? " ",
+            albumName: _lastMediaAlbumName,
+            appName: _lastMediaAPPName,
+            albumCoverImageData: _lastAlbumCover,
+          ),
+        );
+      }
     }
   }
 }
