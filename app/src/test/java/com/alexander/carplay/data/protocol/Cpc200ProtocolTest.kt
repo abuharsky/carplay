@@ -129,4 +129,38 @@ class Cpc200ProtocolTest {
         assertThat(header.type).isEqualTo(Cpc200Protocol.MessageType.SELECT_BT_DEVICE)
         assertThat(String(payload, Charsets.US_ASCII)).isEqualTo("D0:6B:78:53:8E:0C")
     }
+
+    @Test
+    fun `parseMediaData decodes metadata json payload`() {
+        val payloadBody = """{"MediaSongName":"Song","MediaArtistName":"Artist"}"""
+            .toByteArray(Charsets.UTF_8) + byteArrayOf(0)
+        val payload = ByteBuffer.allocate(4 + payloadBody.size)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(1)
+            .put(payloadBody)
+            .array()
+
+        val mediaData = Cpc200Protocol.parseMediaData(payload)
+
+        assertThat(mediaData).isInstanceOf(Cpc200Protocol.MediaDataPayload.Metadata::class.java)
+        val metadata = mediaData as Cpc200Protocol.MediaDataPayload.Metadata
+        assertThat(metadata.rawJson).contains("\"MediaSongName\":\"Song\"")
+        assertThat(metadata.rawJson).contains("\"MediaArtistName\":\"Artist\"")
+    }
+
+    @Test
+    fun `parseMediaData decodes album cover bytes`() {
+        val coverBytes = byteArrayOf(1, 2, 3, 4)
+        val payload = ByteBuffer.allocate(4 + coverBytes.size)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(3)
+            .put(coverBytes)
+            .array()
+
+        val mediaData = Cpc200Protocol.parseMediaData(payload)
+
+        assertThat(mediaData).isInstanceOf(Cpc200Protocol.MediaDataPayload.AlbumCover::class.java)
+        val albumCover = mediaData as Cpc200Protocol.MediaDataPayload.AlbumCover
+        assertThat(albumCover.bytes.toList()).containsExactlyElementsIn(coverBytes.toList()).inOrder()
+    }
 }

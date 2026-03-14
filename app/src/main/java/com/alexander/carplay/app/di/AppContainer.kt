@@ -26,7 +26,7 @@ import com.alexander.carplay.domain.usecase.StartUsbSessionUseCase
 import com.alexander.carplay.domain.usecase.UnbindProjectionUiUseCase
 
 class AppContainer(application: Application) {
-    val logStore = DiagnosticLogStore()
+    val logStore = DiagnosticLogStore(application)
     val settingsPort: ProjectionSettingsPort = SharedPreferencesProjectionSettingsStore(application)
 
     private val serviceConnector = DongleServiceConnector(application, logStore)

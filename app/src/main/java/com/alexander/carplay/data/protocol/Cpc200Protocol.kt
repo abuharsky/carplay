@@ -182,6 +182,38 @@ object Cpc200Protocol {
         val payloadText: String,
     )
 
+    enum class MediaDataType(val id: Int) {
+        METADATA(1),
+        ALBUM_COVER(3),
+        UNKNOWN(-1),
+        ;
+
+        companion object {
+            fun fromId(id: Int): MediaDataType = entries.firstOrNull { it.id == id } ?: UNKNOWN
+        }
+    }
+
+    sealed interface MediaDataPayload {
+        data class Metadata(
+            val rawJson: String,
+            val json: JSONObject,
+        ) : MediaDataPayload
+
+        data class AlbumCover(
+            val bytes: ByteArray,
+        ) : MediaDataPayload
+
+        data class TextSubtype(
+            val subtype: Int,
+            val payloadText: String,
+        ) : MediaDataPayload
+
+        data class Unknown(
+            val subtype: Int,
+            val rawBytes: ByteArray,
+        ) : MediaDataPayload
+    }
+
     data class CommandEnvelope(
         val commandId: Int,
         val extraPayload: ByteArray,
@@ -418,6 +450,34 @@ object Cpc200Protocol {
             subtype = subtype,
             payloadText = payloadText,
         )
+    }
+
+    fun parseMediaData(payload: ByteArray): MediaDataPayload {
+        require(payload.size >= 4) { "MediaData payload must be at least 4 bytes." }
+        val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        val subtype = buffer.int
+        val body = ByteArray(buffer.remaining())
+        buffer.get(body)
+
+        return when (MediaDataType.fromId(subtype)) {
+            MediaDataType.METADATA -> {
+                val trimmedBody = body.dropLastWhile { it == 0.toByte() }.toByteArray()
+                val rawJson = String(trimmedBody, Charsets.UTF_8)
+                val json = JSONObject(rawJson)
+                MediaDataPayload.Metadata(rawJson = rawJson, json = json)
+            }
+
+            MediaDataType.ALBUM_COVER -> MediaDataPayload.AlbumCover(body)
+
+            MediaDataType.UNKNOWN -> {
+                val payloadText = body.toString(Charsets.UTF_8).trim('\u0000').trim()
+                if (payloadText.isNotBlank()) {
+                    MediaDataPayload.TextSubtype(subtype, payloadText)
+                } else {
+                    MediaDataPayload.Unknown(subtype, body)
+                }
+            }
+        }
     }
 
     fun describePhoneType(phoneType: Int): String = when (phoneType) {

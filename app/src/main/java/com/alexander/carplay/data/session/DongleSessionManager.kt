@@ -4,6 +4,7 @@ import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.view.MotionEvent
 import android.view.Surface
+import com.alexander.carplay.data.automotive.DoubleMediaServerPublisher
 import com.alexander.carplay.data.audio.AudioStreamManager
 import com.alexander.carplay.data.executor.CarPlayExecutors
 import com.alexander.carplay.data.input.TouchInputMapper
@@ -58,10 +59,10 @@ class DongleSessionManager(
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
         private const val HEARTBEAT_TIMEOUT_MS = 15_000L
-        private const val STREAMING_HEARTBEAT_TIMEOUT_MS = 90_000L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
         private const val AUTO_CONNECT_RESCAN_INTERVAL_MS = 3_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
+        private const val INBOUND_ACTIVITY_LOG_GAP_MS = 10_000L
     }
 
     private val appContext = context.applicationContext
@@ -69,6 +70,7 @@ class DongleSessionManager(
     private val usbTransport: UsbTransport = AndroidUsbTransport(appContext, logStore)
     private val renderer = H264Renderer(executors, logStore)
     private val audioStreamManager = AudioStreamManager(logStore)
+    private val doubleMediaPublisher = DoubleMediaServerPublisher(appContext, logStore)
     private val touchInputMapper = TouchInputMapper()
     private val outboundQueue = LinkedBlockingQueue<ByteArray>()
     private val knownDevices = linkedMapOf<String, DongleKnownDevice>()
@@ -525,11 +527,10 @@ class DongleSessionManager(
             return
         }
         val currentPhase = _state.value.protocolPhase
-        val timeoutMs = if (currentPhase == ProjectionProtocolPhase.STREAMING_ACTIVE) {
-            STREAMING_HEARTBEAT_TIMEOUT_MS
-        } else {
-            HEARTBEAT_TIMEOUT_MS
+        if (currentPhase == ProjectionProtocolPhase.STREAMING_ACTIVE) {
+            return
         }
+        val timeoutMs = HEARTBEAT_TIMEOUT_MS
         val silenceMs = SystemClock.elapsedRealtime() - lastInboundActivityAtMs
         if (silenceMs < timeoutMs) return
 
@@ -625,6 +626,17 @@ class DongleSessionManager(
         audioStreamManager.updateDeviceSettings(null)
         renderer.hardReset("projection runtime reset: $reason")
         logStore.info(SOURCE, "Projection runtime reset: $reason")
+    }
+
+    private fun markInboundActivity(label: String) {
+        val now = SystemClock.elapsedRealtime()
+        val previousInboundAtMs = lastInboundActivityAtMs
+        lastInboundActivityAtMs = now
+        if (previousInboundAtMs <= 0L) return
+        val gapMs = now - previousInboundAtMs
+        if (gapMs >= INBOUND_ACTIVITY_LOG_GAP_MS) {
+            logStore.info(SOURCE, "Inbound activity after ${gapMs}ms: $label")
+        }
     }
 
     private fun rememberKnownDevice(device: DongleKnownDevice) {
@@ -830,32 +842,56 @@ class DongleSessionManager(
         logStore.info(SOURCE, "Message 0x${type.toString(16)} <- ${payload.toString(Charsets.UTF_8).take(160)}")
     }
 
-    private fun handleDashboardDataMessage(payload: ByteArray?) {
+    private fun handleMediaDataMessage(payload: ByteArray?) {
         if (payload == null || payload.size < 4) {
-            logStore.info(SOURCE, "DashBoard_DATA payload is empty")
+            logStore.info(SOURCE, "MediaData payload is empty")
             return
         }
 
-        val dashboardData = runCatching {
-            Cpc200Protocol.parseDashboardData(payload)
+        val mediaData = runCatching {
+            Cpc200Protocol.parseMediaData(payload)
         }.getOrElse { error ->
-            logStore.error(SOURCE, "Failed to parse DashBoard_DATA", error)
+            logStore.error(SOURCE, "Failed to parse MediaData", error)
             return
         }
 
-        val subtypeLabel = when (dashboardData.subtype) {
-            200 -> "NaviJSON"
-            else -> "subtype=${dashboardData.subtype}"
-        }
+        when (mediaData) {
+            is Cpc200Protocol.MediaDataPayload.Metadata -> {
+                val compactPayload = mediaData.rawJson
+                    .replace(Regex("\\s+"), " ")
+                    .take(500)
+                markInboundActivity("MediaData metadata")
+                logStore.info(SOURCE, "MediaData metadata <- $compactPayload")
+                doubleMediaPublisher.onMediaMetadata(mediaData.json)
+            }
 
-        val compactPayload = dashboardData.payloadText
-            .replace(Regex("\\s+"), " ")
-            .take(500)
+            is Cpc200Protocol.MediaDataPayload.AlbumCover -> {
+                markInboundActivity("MediaData cover")
+                logStore.info(SOURCE, "MediaData album cover <- ${mediaData.bytes.size} bytes")
+                doubleMediaPublisher.onAlbumCover(mediaData.bytes)
+            }
 
-        if (compactPayload.isBlank()) {
-            logStore.info(SOURCE, "DashBoard_DATA $subtypeLabel")
-        } else {
-            logStore.info(SOURCE, "DashBoard_DATA $subtypeLabel <- $compactPayload")
+            is Cpc200Protocol.MediaDataPayload.TextSubtype -> {
+                val subtypeLabel = when (mediaData.subtype) {
+                    200 -> "NaviJSON"
+                    else -> "subtype=${mediaData.subtype}"
+                }
+                val compactPayload = mediaData.payloadText
+                    .replace(Regex("\\s+"), " ")
+                    .take(500)
+                if (compactPayload.isBlank()) {
+                    logStore.info(SOURCE, "DashBoard_DATA $subtypeLabel")
+                } else {
+                    logStore.info(SOURCE, "DashBoard_DATA $subtypeLabel <- $compactPayload")
+                }
+            }
+
+            is Cpc200Protocol.MediaDataPayload.Unknown -> {
+                logStore.info(
+                    SOURCE,
+                    "MediaData subtype=${mediaData.subtype} raw=${mediaData.rawBytes.size} bytes",
+                )
+            }
         }
     }
 
@@ -871,6 +907,7 @@ class DongleSessionManager(
         }
 
         val meta = Cpc200Protocol.parseVideoMeta(payload, 0)
+        markInboundActivity("NaviVideo ${meta.width}x${meta.height}")
         logStore.info(
             SOURCE,
             "NaviVideo packet ${meta.width}x${meta.height}, flags=${meta.flags}, data=${meta.dataLength}",
@@ -965,6 +1002,7 @@ class DongleSessionManager(
         if (currentSession !== session) return
 
         val safeMeta = meta ?: return
+        markInboundActivity("Video ${safeMeta.width}x${safeMeta.height}")
         renderer.updateVideoFormat(safeMeta.width, safeMeta.height)
         if (pendingConnectionDeviceId != null) {
             pendingConnectionDeviceId = null
@@ -996,7 +1034,7 @@ class DongleSessionManager(
         payload: ByteArray?,
     ) {
         if (currentSession !== session) return
-        lastInboundActivityAtMs = SystemClock.elapsedRealtime()
+        markInboundActivity(Cpc200Protocol.describeMessageType(type))
         when (type) {
             Cpc200Protocol.MessageType.HEARTBEAT -> {
                 lastHeartbeatEchoAtMs = lastInboundActivityAtMs
@@ -1131,7 +1169,7 @@ class DongleSessionManager(
             }
 
             Cpc200Protocol.MessageType.MEDIA_DATA -> {
-                handleDashboardDataMessage(payload)
+                handleMediaDataMessage(payload)
             }
 
             Cpc200Protocol.MessageType.BT_DEVICE_NAME -> {

@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.alexander.carplay"
+        applicationId = "ru.bukharskii.carplay_example"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -20,7 +20,6 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
 
@@ -74,6 +73,7 @@ configurations.all {
 }
 
 dependencies {
+    implementation(files("libs/incall-server-sdk.jar"))
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
