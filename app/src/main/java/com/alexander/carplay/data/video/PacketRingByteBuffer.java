@@ -7,9 +7,9 @@ public class PacketRingByteBuffer {
         void write(byte[] bytes, int offset);
     }
 
-    private static final int MAX_BUFFER_SIZE = 64 * 1024 * 1024;
-    private static final int MIN_BUFFER_SIZE = 1024 * 1024;
-    private static final int EMERGENCY_RESET_THRESHOLD = 32 * 1024 * 1024;
+    private static final int MAX_BUFFER_SIZE = 128 * 1024 * 1024;
+    private static final int MIN_BUFFER_SIZE = 4 * 1024 * 1024;
+    private static final int EMERGENCY_RESET_THRESHOLD = 96 * 1024 * 1024;
 
     private byte[] buffer;
     private int readPosition = 0;
@@ -213,4 +213,3 @@ public class PacketRingByteBuffer {
         resizeAttemptCount = 0;
     }
 }
-

@@ -24,9 +24,19 @@ enum class ProjectionEqPreset(
     val bandsDb: List<Float>,
 ) {
     FLAT(List(10) { 0f }),
+    ACOUSTIC(listOf(4f, 3f, 2f, 1f, 0f, 0f, 1f, 2f, 3f, 4f)),
+    CLASSICAL(listOf(4f, 3f, 2f, 1f, -1f, -1f, 0f, 1f, 3f, 4f)),
+    DANCE(listOf(5f, 4f, 2f, 0f, 0f, 1f, 3f, 4f, 5f, 5f)),
+    ELECTRONIC(listOf(4f, 3f, 1f, 0f, -1f, 1f, 2f, 4f, 5f, 5f)),
+    HIP_HOP(listOf(5f, 4f, 2f, 1f, -1f, -1f, 1f, 2f, 3f, 4f)),
+    JAZZ(listOf(4f, 3f, 1f, 2f, -1f, -1f, 0f, 2f, 3f, 4f)),
+    POP(listOf(-1f, 1f, 3f, 4f, 3f, 1f, -1f, -1f, 0f, 1f)),
+    ROCK(listOf(5f, 3f, 1f, -1f, -1f, 1f, 3f, 4f, 5f, 5f)),
     LOUDNESS(listOf(4f, 3f, 2f, 1f, 0f, 0f, 1f, 2f, 3f, 4f)),
     BASS(listOf(6f, 5f, 4f, 3f, 1f, 0f, -1f, -2f, -2f, -2f)),
     VOCAL(listOf(-2f, -1f, 0f, 2f, 4f, 5f, 4f, 2f, 0f, -1f)),
+    SPOKEN_WORD(listOf(-4f, -3f, -2f, 1f, 4f, 5f, 5f, 3f, 0f, -1f)),
+    TREBLE_BOOSTER(listOf(-4f, -4f, -2f, 0f, 1f, 3f, 5f, 6f, 6f, 6f)),
     BRIGHT(listOf(-2f, -2f, -1f, 0f, 1f, 2f, 4f, 5f, 6f, 6f)),
     CUSTOM(List(10) { 0f });
 

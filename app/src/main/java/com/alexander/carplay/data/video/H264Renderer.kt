@@ -19,8 +19,9 @@ class H264Renderer(
 ) : LogCallback {
     companion object {
         private const val SOURCE = "Codec"
-        private const val INITIAL_RING_BUFFER = 4 * 1024 * 1024
+        private const val INITIAL_RING_BUFFER = 12 * 1024 * 1024
         private const val MAX_INPUT_SIZE_BYTES = 2 * 1024 * 1024
+        private const val DEFAULT_FRAME_DURATION_US = 16_667L
     }
 
     private val lock = Any()
@@ -31,6 +32,7 @@ class H264Renderer(
     }
     private val availableInputBufferIndexes = ArrayDeque<Int>()
     private val presentationTimeUs = AtomicLong(0L)
+    private val frameDurationUs = AtomicLong(DEFAULT_FRAME_DURATION_US)
 
     @Volatile
     private var currentSurface: Surface? = null
@@ -72,9 +74,15 @@ class H264Renderer(
     fun updateVideoFormat(
         width: Int,
         height: Int,
+        fps: Int? = null,
     ) {
         executors.codecOutput.execute {
             synchronized(lock) {
+                fps?.takeIf { it > 0 }?.let { actualFps ->
+                    val nextFrameDurationUs = (1_000_000L / actualFps).coerceAtLeast(1L)
+                    frameDurationUs.set(nextFrameDurationUs)
+                    log("Frame pacing updated to ${actualFps}fps (${nextFrameDurationUs}us)")
+                }
                 if (configuredWidth == width && configuredHeight == height) {
                     return@execute
                 }
@@ -108,6 +116,7 @@ class H264Renderer(
                 try {
                     // Input indexes obtained before flush are no longer valid afterwards.
                     availableInputBufferIndexes.clear()
+                    presentationTimeUs.set(0L)
                     codec?.flush()
                     codec?.start()
                     log("Codec soft reset (flush/start)")
@@ -198,6 +207,8 @@ class H264Renderer(
         }
         codec = null
         availableInputBufferIndexes.clear()
+        presentationTimeUs.set(0L)
+        frameDurationUs.set(DEFAULT_FRAME_DURATION_US)
         ringBuffer.reset()
     }
 
@@ -288,7 +299,7 @@ class H264Renderer(
         }
     }
 
-    private fun nextPtsUs(): Long = presentationTimeUs.addAndGet(33_333L)
+    private fun nextPtsUs(): Long = presentationTimeUs.addAndGet(frameDurationUs.get())
 
     private fun putByteBuffer(
         destination: ByteBuffer,

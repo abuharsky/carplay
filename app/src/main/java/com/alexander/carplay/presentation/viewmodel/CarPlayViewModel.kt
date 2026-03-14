@@ -211,12 +211,13 @@ class CarPlayViewModel(
 
         val deviceItems = devices.map { it.toUiModel() }
         val showConnectionOverlay = state != ProjectionConnectionState.STREAMING || !surfaceAttached
+        val overlayStatusMessage = overlayStatusMessage()
 
         return CarPlayUiState(
             stateLabel = stateLabel,
-            statusMessage = statusMessage,
+            statusMessage = overlayStatusMessage,
             protocolPhaseLabel = protocolPhase.takeIf { it != ProjectionProtocolPhase.NONE }?.shortLabel,
-            protocolPhaseTitle = protocolPhase.takeIf { it != ProjectionProtocolPhase.NONE }?.title,
+            protocolPhaseTitle = protocolPhase.takeIf { it != ProjectionProtocolPhase.NONE }?.overlayTitle(),
             overlayColorRes = when (state) {
                 ProjectionConnectionState.IDLE -> R.color.status_idle
                 ProjectionConnectionState.SEARCHING -> R.color.status_searching
@@ -235,6 +236,83 @@ class CarPlayViewModel(
             videoWidth = videoWidth,
             videoHeight = videoHeight,
         )
+    }
+
+    private fun ProjectionSessionSnapshot.overlayStatusMessage(): String {
+        val knownDevicesAvailable = devices.isNotEmpty()
+        val currentName = currentDeviceName?.takeIf { it.isNotBlank() }
+
+        return when (protocolPhase) {
+            ProjectionProtocolPhase.HOST_INIT -> "Запускаем адаптер"
+            ProjectionProtocolPhase.INIT_ECHO -> {
+                if (knownDevicesAvailable) {
+                    "Ищем iPhone"
+                } else {
+                    "Ждем iPhone рядом"
+                }
+            }
+
+            ProjectionProtocolPhase.PHONE_SEARCH -> "Ищем iPhone"
+            ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED -> "Подключаем iPhone"
+            ProjectionProtocolPhase.CARPLAY_SESSION_SETUP -> "Запускаем CarPlay"
+            ProjectionProtocolPhase.AIRPLAY_NEGOTIATING -> "Открываем CarPlay"
+            ProjectionProtocolPhase.STREAMING_ACTIVE -> {
+                if (surfaceAttached) {
+                    "CarPlay работает"
+                } else {
+                    "CarPlay готов"
+                }
+            }
+
+            ProjectionProtocolPhase.SESSION_ENDED -> "Переподключаем"
+            ProjectionProtocolPhase.NEGOTIATION_FAILED -> "Повторяем подключение"
+            ProjectionProtocolPhase.WAITING_RETRY -> {
+                if (knownDevicesAvailable) {
+                    "Ищем снова"
+                } else {
+                    "Ждем iPhone рядом"
+                }
+            }
+
+            ProjectionProtocolPhase.NONE -> when (state) {
+                ProjectionConnectionState.IDLE -> "Готово"
+                ProjectionConnectionState.SEARCHING -> "Ищем адаптер"
+                ProjectionConnectionState.WAITING_PERMISSION -> "Ждем доступ USB"
+                ProjectionConnectionState.CONNECTING -> {
+                    when {
+                        currentName != null -> "Подключаем $currentName"
+                        knownDevicesAvailable -> "Подключаем iPhone"
+                        else -> "Подключаемся"
+                    }
+                }
+
+                ProjectionConnectionState.INIT -> "Готовим запуск"
+                ProjectionConnectionState.WAITING_PHONE -> {
+                    if (knownDevicesAvailable) {
+                        "Выберите iPhone"
+                    } else {
+                        "Ждем iPhone рядом"
+                    }
+                }
+
+                ProjectionConnectionState.STREAMING -> "CarPlay работает"
+                ProjectionConnectionState.ERROR -> "Переподключаем"
+            }
+        }
+    }
+
+    private fun ProjectionProtocolPhase.overlayTitle(): String = when (this) {
+        ProjectionProtocolPhase.NONE -> "Нет активной фазы"
+        ProjectionProtocolPhase.HOST_INIT -> "Запуск адаптера"
+        ProjectionProtocolPhase.INIT_ECHO -> "Адаптер готов"
+        ProjectionProtocolPhase.PHONE_SEARCH -> "Поиск iPhone"
+        ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED -> "Bluetooth подключен"
+        ProjectionProtocolPhase.CARPLAY_SESSION_SETUP -> "Запуск CarPlay"
+        ProjectionProtocolPhase.AIRPLAY_NEGOTIATING -> "Согласование AirPlay"
+        ProjectionProtocolPhase.STREAMING_ACTIVE -> "Видео активно"
+        ProjectionProtocolPhase.SESSION_ENDED -> "Сеанс завершен"
+        ProjectionProtocolPhase.NEGOTIATION_FAILED -> "Ошибка согласования"
+        ProjectionProtocolPhase.WAITING_RETRY -> "Повторный поиск"
     }
 
     private fun ProjectionDeviceSnapshot.toUiModel(): CarPlayDeviceUiState {

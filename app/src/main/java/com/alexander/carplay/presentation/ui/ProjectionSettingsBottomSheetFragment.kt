@@ -297,9 +297,19 @@ class ProjectionSettingsBottomSheetFragment : DialogFragment() {
         binding.eqPresetGroup.check(
             when (playerSettings.eqPreset) {
                 ProjectionEqPreset.FLAT -> R.id.eqPresetFlatButton
+                ProjectionEqPreset.ACOUSTIC,
+                ProjectionEqPreset.CLASSICAL,
+                ProjectionEqPreset.DANCE,
+                ProjectionEqPreset.ELECTRONIC,
+                ProjectionEqPreset.HIP_HOP,
+                ProjectionEqPreset.JAZZ,
+                ProjectionEqPreset.POP,
+                ProjectionEqPreset.ROCK,
                 ProjectionEqPreset.LOUDNESS -> R.id.eqPresetLoudnessButton
                 ProjectionEqPreset.BASS -> R.id.eqPresetBassButton
                 ProjectionEqPreset.VOCAL -> R.id.eqPresetVocalButton
+                ProjectionEqPreset.SPOKEN_WORD,
+                ProjectionEqPreset.TREBLE_BOOSTER,
                 ProjectionEqPreset.BRIGHT -> R.id.eqPresetBrightButton
                 ProjectionEqPreset.CUSTOM -> R.id.eqPresetCustomButton
             },

@@ -168,7 +168,7 @@ data class ProjectionSessionConfig(
         ): OemBrandingConfig {
             return OemBrandingConfig(
                 visible = true,
-                label = "Настройки CarPlay",
+                label = "Настр. CarPlay",
                 name = boxName,
                 model = "Magic-Car-Link-1.00",
                 oemIconPng = renderBrandingPng(context, 256),
@@ -183,7 +183,7 @@ data class ProjectionSessionConfig(
             sizePx: Int,
         ): ByteArray {
             val background = requireNotNull(AppCompatResources.getDrawable(context, R.drawable.ic_launcher_background))
-            val foreground = requireNotNull(AppCompatResources.getDrawable(context, R.drawable.ic_launcher_foreground))
+            val foreground = requireNotNull(AppCompatResources.getDrawable(context, R.drawable.ic_oem_icon_foreground))
 
             val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)

@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -69,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -288,6 +291,11 @@ private fun ProjectionTextureSurface(
         if (width != null && height != null) {
             surfaceTexture.setDefaultBufferSize(width, height)
         }
+        view.isOpaque = true
+        view.post {
+            view.requestLayout()
+            view.invalidate()
+        }
         if (textureSurface == null) {
             textureSurface = AndroidSurface(surfaceTexture)
         }
@@ -360,6 +368,10 @@ private fun ProjectionTextureSurface(
                         if (videoW != null && videoH != null) {
                             surface.setDefaultBufferSize(videoW, videoH)
                         }
+                        post {
+                            requestLayout()
+                            invalidate()
+                        }
                     }
 
                     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
@@ -384,6 +396,10 @@ private fun ProjectionTextureSurface(
             val height = videoHeight
             if (width != null && height != null) {
                 textureView.surfaceTexture?.setDefaultBufferSize(width, height)
+            }
+            textureView.post {
+                textureView.requestLayout()
+                textureView.invalidate()
             }
             if (textureView.isAvailable) {
                 bindSurfaceIfPossible(textureView)
@@ -420,7 +436,7 @@ private fun ConnectionOverlay(
     connectActionEnabled: Boolean,
     showStopAction: Boolean,
 ) {
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(
@@ -433,72 +449,37 @@ private fun ConnectionOverlay(
                 ),
             )
             .padding(WindowInsets.safeDrawing.asPaddingValues()),
-            contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
+        val logoTopOffset = maxHeight * 0.3f
+        val overlayBottomOffset = maxHeight * 0.2f
+        val hasDevices = devices.isNotEmpty()
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 28.dp, vertical = 28.dp),
+                .align(Alignment.TopCenter)
+                .padding(top = logoTopOffset),
         ) {
-            Spacer(modifier = Modifier.weight(1f))
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_overlay_carplay_mark),
-                    contentDescription = stringResource(id = R.string.carplay_logo),
-                    modifier = Modifier.size(34.dp),
-                    contentScale = ContentScale.Fit,
-                )
-                Text(
-                    text = stringResource(id = R.string.carplay_wordmark),
-                    style = MaterialTheme.typography.displaySmall.copy(
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
             Text(
-                text = uiState.statusMessage,
-                color = Color.White.copy(alpha = 0.58f),
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 420.dp),
+                text = stringResource(id = R.string.carplay_wordmark),
+                style = MaterialTheme.typography.displayLarge.copy(
+                    color = Color.White,
+                    fontWeight = FontWeight.Medium,
+                ),
             )
+        }
 
-            if (uiState.protocolPhaseLabel != null && uiState.protocolPhaseTitle != null) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = Color.White.copy(alpha = 0.08f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                ) {
-                    Text(
-                        text = "${uiState.protocolPhaseLabel}  ${uiState.protocolPhaseTitle}",
-                        color = Color.White.copy(alpha = 0.72f),
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            Row(
-                modifier = Modifier
-                    .wrapContentWidth()
-                    .widthIn(max = 520.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .wrapContentWidth()
+                .widthIn(max = 520.dp)
+                .padding(start = 28.dp, end = 28.dp, bottom = overlayBottomOffset),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (hasDevices) {
                 DeviceSelectionField(
                     modifier = Modifier.widthIn(min = 250.dp, max = 420.dp),
                     devices = devices,
@@ -507,41 +488,53 @@ private fun ConnectionOverlay(
                     onToggle = onSelectorToggle,
                     onDismiss = onSelectorDismiss,
                     onSelect = onDeviceSelected,
-                    fallbackStatus = if (devices.isEmpty()) {
+                    fallbackStatus = uiState.statusMessage,
+                )
+            } else {
+                SearchStatusLine(
+                    modifier = Modifier.widthIn(min = 250.dp, max = 420.dp),
+                    status = if (uiState.statusMessage.isBlank()) {
                         stringResource(id = R.string.overlay_no_device_title)
                     } else {
                         uiState.statusMessage
                     },
                 )
+            }
 
+            if (hasDevices) {
                 OverlayActionButton(
+                    modifier = Modifier.padding(start = 16.dp),
                     isEnabled = connectActionEnabled,
                     showStopAction = showStopAction,
                     onClick = onActionClick,
                 )
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(18.dp))
-
-            if (devices.isEmpty()) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color.White.copy(alpha = 0.08f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
-                    modifier = Modifier.wrapContentWidth(),
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.replay_dump),
-                        color = Color.White.copy(alpha = 0.92f),
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                        modifier = Modifier
-                            .clickable(onClick = onReplayClick)
-                            .padding(horizontal = 18.dp, vertical = 12.dp),
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.weight(1f))
+@Composable
+private fun SearchStatusLine(
+    modifier: Modifier,
+    status: String,
+) {
+    Surface(
+        modifier = modifier.height(74.dp),
+        color = Color.Transparent,
+        contentColor = Color.White,
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = status,
+                color = Color.White.copy(alpha = 0.46f),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
@@ -557,9 +550,12 @@ private fun DeviceSelectionField(
     onSelect: (CarPlayDeviceUiState) -> Unit,
     fallbackStatus: String,
 ) {
+    val showCompactStatusOnly = selectedDevice == null && devices.isEmpty()
+
     Box(modifier = modifier) {
         Surface(
             modifier = Modifier
+                .height(74.dp)
                 .fillMaxWidth()
                 .clickable(
                     enabled = devices.isNotEmpty(),
@@ -576,7 +572,7 @@ private fun DeviceSelectionField(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 22.dp, vertical = 18.dp),
+                    .padding(horizontal = 22.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -584,22 +580,32 @@ private fun DeviceSelectionField(
 
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (showCompactStatusOnly) 0.dp else 4.dp),
                 ) {
-                    Text(
-                        text = selectedDevice?.title ?: stringResource(id = R.string.overlay_choose_device),
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = selectedDevice?.subtitle ?: fallbackStatus,
-                        color = Color.White.copy(alpha = 0.68f),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (showCompactStatusOnly) {
+                        Text(
+                            text = fallbackStatus,
+                            color = Color.White.copy(alpha = 0.84f),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        Text(
+                            text = selectedDevice?.title ?: stringResource(id = R.string.overlay_choose_device),
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = selectedDevice?.subtitle ?: fallbackStatus,
+                            color = Color.White.copy(alpha = 0.68f),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
 
                 if (selectedDevice?.isConnecting == true) {
@@ -680,6 +686,7 @@ private fun ActiveStateDot(
 
 @Composable
 private fun OverlayActionButton(
+    modifier: Modifier = Modifier,
     isEnabled: Boolean,
     showStopAction: Boolean,
     onClick: () -> Unit,
@@ -695,30 +702,34 @@ private fun OverlayActionButton(
         colorResource(id = R.color.overlay_action_primary_icon)
     }
 
-    Surface(
-        modifier = Modifier
-            .size(76.dp)
+    Box(
+        modifier = modifier
+            .requiredSize(56.dp)
+            .aspectRatio(1f)
+            .shadow(
+                elevation = 10.dp,
+                shape = CircleShape,
+                clip = false,
+            )
+            .clip(CircleShape)
+            .background(backgroundColor, CircleShape)
+            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
             .alpha(if (isEnabled) 1f else 0.35f)
             .clickable(enabled = isEnabled, onClick = onClick),
-        color = backgroundColor,
-        shape = CircleShape,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
-        shadowElevation = 10.dp,
+        contentAlignment = Alignment.Center,
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                painter = painterResource(
-                    id = if (showStopAction) {
-                        R.drawable.ic_overlay_close
-                    } else {
-                        R.drawable.ic_overlay_arrow_right
-                    },
-                ),
-                contentDescription = null,
-                modifier = Modifier.size(28.dp),
-                tint = iconTint,
-            )
-        }
+        Icon(
+            painter = painterResource(
+                id = if (showStopAction) {
+                    R.drawable.ic_overlay_close
+                } else {
+                    R.drawable.ic_overlay_arrow_right
+                },
+            ),
+            contentDescription = null,
+            modifier = Modifier.size(36.dp),
+            tint = iconTint,
+        )
     }
 }
 
@@ -837,13 +848,13 @@ private fun ProjectionSettingsScreen(
                     viewModel.saveDeviceSettings(workingSettings, reconnectRequired)
                     onDismiss()
                 },
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
             )
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
             ) {
                 item {
                     PlayerAudioSection(
@@ -995,7 +1006,7 @@ private fun SettingsSectionCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 26.dp, vertical = 24.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
         ) {
             Text(
                 text = title,
@@ -1011,7 +1022,7 @@ private fun SettingsSectionCard(
                 )
                 Spacer(modifier = Modifier.height(20.dp))
             } else {
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             }
             content()
         }
@@ -1043,23 +1054,6 @@ private fun PlayerAudioSection(
             PlayerTabs(
                 selected = settings.selectedPlayer,
                 onSelect = onSelectPlayer,
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            PresetTabs(
-                selected = playerSettings.eqPreset,
-                onSelect = { preset: ProjectionEqPreset ->
-                    val updated = if (preset == ProjectionEqPreset.CUSTOM) {
-                        playerSettings.copy(eqPreset = ProjectionEqPreset.CUSTOM)
-                    } else {
-                        playerSettings.copy(
-                            eqPreset = preset,
-                            eqBandsDb = preset.bandsDb,
-                        )
-                    }
-                    onRoutePlayerSettingsChanged(updated)
-                },
             )
 
             Spacer(modifier = Modifier.height(18.dp))
@@ -1129,6 +1123,23 @@ private fun PlayerAudioSection(
                     )
                 },
             )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            PresetTabs(
+                selected = playerSettings.eqPreset,
+                onSelect = { preset: ProjectionEqPreset ->
+                    val updated = if (preset == ProjectionEqPreset.CUSTOM) {
+                        playerSettings.copy(eqPreset = ProjectionEqPreset.CUSTOM)
+                    } else {
+                        playerSettings.copy(
+                            eqPreset = preset,
+                            eqBandsDb = preset.bandsDb,
+                        )
+                    }
+                    onRoutePlayerSettingsChanged(updated)
+                },
+            )
         }
     }
 }
@@ -1138,27 +1149,29 @@ private fun PlayerTabs(
     selected: ProjectionAudioPlayerType,
     onSelect: (ProjectionAudioPlayerType) -> Unit,
 ) {
-    val scrollState = rememberScrollState()
     Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(scrollState),
+            .fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         ProjectionAudioPlayerType.entries.forEach { player ->
             val isSelected = player == selected
             Surface(
+                modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(22.dp),
                 color = if (isSelected) Color.White.copy(alpha = 0.94f) else Color.White.copy(alpha = 0.06f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = if (isSelected) 0f else 0.06f)),
             ) {
                 Text(
-                    text = player.title,
+                    text = playerLabel(player),
                     color = if (isSelected) Color(0xFF09111E) else Color.White.copy(alpha = 0.76f),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                     modifier = Modifier
                         .clickable { onSelect(player) }
-                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
                 )
             }
         }
@@ -1172,10 +1185,18 @@ private fun PresetTabs(
 ) {
     val presets = listOf(
         ProjectionEqPreset.FLAT,
+        ProjectionEqPreset.ACOUSTIC,
+        ProjectionEqPreset.CLASSICAL,
+        ProjectionEqPreset.DANCE,
+        ProjectionEqPreset.ELECTRONIC,
+        ProjectionEqPreset.HIP_HOP,
+        ProjectionEqPreset.JAZZ,
+        ProjectionEqPreset.POP,
+        ProjectionEqPreset.ROCK,
         ProjectionEqPreset.LOUDNESS,
         ProjectionEqPreset.BASS,
-        ProjectionEqPreset.VOCAL,
-        ProjectionEqPreset.BRIGHT,
+        ProjectionEqPreset.SPOKEN_WORD,
+        ProjectionEqPreset.TREBLE_BOOSTER,
         ProjectionEqPreset.CUSTOM,
     )
     val scrollState = rememberScrollState()
@@ -1189,6 +1210,7 @@ private fun PresetTabs(
         presets.forEach { preset ->
             val selectedChip = preset == selected
             Surface(
+                modifier = Modifier.height(58.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = if (selectedChip) Color(0x3349A6FF) else Color.White.copy(alpha = 0.04f),
                 border = androidx.compose.foundation.BorderStroke(
@@ -1202,7 +1224,10 @@ private fun PresetTabs(
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     modifier = Modifier
                         .clickable { onSelect(preset) }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .fillMaxHeight()
+                        .wrapContentHeight(Alignment.CenterVertically)
+                        .padding(horizontal = 18.dp),
+                    textAlign = TextAlign.Center,
                 )
             }
         }
@@ -1265,7 +1290,7 @@ private fun VerticalEqEditor(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
+                .padding(horizontal = 12.dp, vertical = 18.dp),
         ) {
             Text(
                 text = stringResource(id = R.string.settings_eq_title),
@@ -1276,13 +1301,13 @@ private fun VerticalEqEditor(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 300.dp),
+                    .height(456.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom,
             ) {
                 labels.forEachIndexed { index, label ->
                     VerticalEqBand(
-                        width = 48.dp,
+                        width = 60.dp,
                         label = label,
                         value = bandsDb.getOrElse(index) { 0f },
                         onValueChange = { onBandChange(index, it) },
@@ -1300,43 +1325,56 @@ private fun VerticalEqBand(
     value: Float,
     onValueChange: (Float) -> Unit,
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.width(width),
+    BoxWithConstraints(
+        modifier = Modifier
+            .width(width)
+            .fillMaxHeight(),
     ) {
-        Text(
-            text = formatEq(value),
-            color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.labelSmall,
-            textAlign = TextAlign.Center,
-        )
-
+        val sliderLength = (maxHeight - 60.dp).coerceAtLeast(340.dp)
         val animatedValue by animateFloatAsState(
             targetValue = value,
             animationSpec = tween(140),
             label = "eqBandValue",
         )
 
-        Slider(
-            value = animatedValue,
-            onValueChange = onValueChange,
-            valueRange = -12f..12f,
-            modifier = Modifier
-                .height(220.dp)
-                .graphicsLayer {
-                    rotationZ = -90f
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
-                }
-                .width(220.dp),
-        )
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = formatEq(value),
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+            )
 
-        Text(
-            text = label,
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-            textAlign = TextAlign.Center,
-        )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Slider(
+                    value = animatedValue,
+                    onValueChange = onValueChange,
+                    valueRange = -12f..12f,
+                    modifier = Modifier
+                        .requiredSize(width = sliderLength, height = 64.dp)
+                        .graphicsLayer {
+                            rotationZ = -90f
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
+                        },
+                )
+            }
+
+            Text(
+                text = label,
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -1426,12 +1464,32 @@ private fun AdapterToggleRow(
 
 private fun presetLabel(preset: ProjectionEqPreset): String {
     return when (preset) {
-        ProjectionEqPreset.FLAT -> "Flat"
-        ProjectionEqPreset.LOUDNESS -> "Loud"
-        ProjectionEqPreset.BASS -> "Bass"
-        ProjectionEqPreset.VOCAL -> "Vocal"
-        ProjectionEqPreset.BRIGHT -> "Bright"
-        ProjectionEqPreset.CUSTOM -> "Custom"
+        ProjectionEqPreset.FLAT -> "Ровно"
+        ProjectionEqPreset.ACOUSTIC -> "Акустика"
+        ProjectionEqPreset.CLASSICAL -> "Классика"
+        ProjectionEqPreset.DANCE -> "Танцы"
+        ProjectionEqPreset.ELECTRONIC -> "Электро"
+        ProjectionEqPreset.HIP_HOP -> "Хип-хоп"
+        ProjectionEqPreset.JAZZ -> "Джаз"
+        ProjectionEqPreset.POP -> "Поп"
+        ProjectionEqPreset.ROCK -> "Рок"
+        ProjectionEqPreset.LOUDNESS -> "Громко"
+        ProjectionEqPreset.BASS -> "Бас+"
+        ProjectionEqPreset.VOCAL -> "Вокал"
+        ProjectionEqPreset.SPOKEN_WORD -> "Речь"
+        ProjectionEqPreset.TREBLE_BOOSTER -> "Высокие+"
+        ProjectionEqPreset.BRIGHT -> "Ярко"
+        ProjectionEqPreset.CUSTOM -> "Свои"
+    }
+}
+
+private fun playerLabel(player: ProjectionAudioPlayerType): String {
+    return when (player) {
+        ProjectionAudioPlayerType.MEDIA -> "Медиа"
+        ProjectionAudioPlayerType.NAVI -> "Навигатор"
+        ProjectionAudioPlayerType.SIRI -> "Siri"
+        ProjectionAudioPlayerType.PHONE -> "Звонок"
+        ProjectionAudioPlayerType.ALERT -> "Уведомления"
     }
 }
 

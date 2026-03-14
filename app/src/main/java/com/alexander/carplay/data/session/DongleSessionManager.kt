@@ -342,6 +342,10 @@ class DongleSessionManager(
         surfaceAttached = true
         logStore.info(SOURCE, "Projection surface attached")
         renderer.attachSurface(surface)
+        if (currentSession != null && (_state.value.videoWidth != null || currentPhoneType != null)) {
+            queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.REQUEST_KEY_FRAME))
+            logStore.info(SOURCE, "Requested key frame after surface attach")
+        }
         executors.session.execute {
             flowController.onSurfaceAttached()
             updateState(
@@ -609,7 +613,7 @@ class DongleSessionManager(
         heartbeatTimeoutTriggered = false
         audioStreamManager.release()
         audioStreamManager.updateDeviceSettings(null)
-        renderer.softReset()
+        renderer.hardReset("projection runtime reset: $reason")
         logStore.info(SOURCE, "Projection runtime reset: $reason")
     }
 
@@ -989,7 +993,7 @@ class DongleSessionManager(
                         SOURCE,
                         "Open acknowledged by adapter: ${openedInfo.width}x${openedInfo.height}@${openedInfo.fps}",
                     )
-                    renderer.updateVideoFormat(openedInfo.width, openedInfo.height)
+                    renderer.updateVideoFormat(openedInfo.width, openedInfo.height, openedInfo.fps)
                     if (sessionMode == SessionMode.REPLAY && openedInfo.fps > 0) {
                         replayFrameDelayMs = (1000L / openedInfo.fps).coerceAtLeast(1L)
                     }
