@@ -49,10 +49,7 @@ class CarPlayActivity : AppCompatActivity() {
             width: Int,
             height: Int,
         ) {
-            updateSurfaceBufferSize(surface)
-            outputSurface = Surface(surface)
-            viewModel.onSurfaceAvailable(outputSurface!!)
-            applyVideoTransform()
+            bindSurfaceTexture(surface)
         }
 
         override fun onSurfaceTextureSizeChanged(
@@ -85,6 +82,9 @@ class CarPlayActivity : AppCompatActivity() {
         diagnosticsCollapsed = savedInstanceState?.getBoolean(STATE_DIAGNOSTICS_COLLAPSED, false) ?: false
 
         binding.projectionSurface.surfaceTextureListener = surfaceTextureListener
+        if (binding.projectionSurface.isAvailable) {
+            binding.projectionSurface.surfaceTexture?.let(::bindSurfaceTexture)
+        }
         binding.connectButton.setOnClickListener { viewModel.onConnectClicked() }
         binding.replayButton.setOnClickListener { viewModel.onReplayClicked() }
         binding.collapseButton.setOnClickListener { setDiagnosticsCollapsed(true) }
@@ -224,6 +224,14 @@ class CarPlayActivity : AppCompatActivity() {
 
     private fun isLogNearTop(): Boolean {
         return binding.logScrollView.scrollY <= 48
+    }
+
+    private fun bindSurfaceTexture(surfaceTexture: SurfaceTexture) {
+        updateSurfaceBufferSize(surfaceTexture)
+        outputSurface?.release()
+        outputSurface = Surface(surfaceTexture)
+        viewModel.onSurfaceAvailable(outputSurface!!)
+        applyVideoTransform()
     }
 
     private fun hideSystemBars() {

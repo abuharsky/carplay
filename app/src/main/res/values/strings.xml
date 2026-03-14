@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">CarPlay Diagnostic</string>
+    <string name="app_name">Настр. CarPlay</string>
     <string name="notification_channel_name">CarPlay adapter</string>
     <string name="notification_title">CarPlay adapter active</string>
     <string name="notification_text">Foreground service keeps the USB adapter session alive.</string>

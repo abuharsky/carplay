@@ -45,6 +45,7 @@ object Cpc200Protocol {
         const val UNKNOWN_37 = 0x25
         const val UNKNOWN_38 = 0x26
         const val MEDIA_DATA = 0x2A
+        const val NAVI_VIDEO = 0x2C
         const val SEND_FILE = 0x99
         const val HEARTBEAT = 0xAA
         const val SOFTWARE_VERSION = 0xCC
@@ -150,6 +151,11 @@ object Cpc200Protocol {
         val command: Int?,
     )
 
+    data class DashboardData(
+        val subtype: Int,
+        val payloadText: String,
+    )
+
     fun alignTo16(value: Int): Int = (value + 15) and 0xFFFFFFF0.toInt()
 
     fun buildHeader(
@@ -232,6 +238,28 @@ object Cpc200Protocol {
 
         return wrapMessage(MessageType.BOX_SETTINGS, payload)
     }
+
+    fun extendedBoxSettings(config: ExtendedBoxSettingsConfig): ByteArray {
+        val payload = buildExtendedBoxSettingsJson(config).toByteArray(Charsets.UTF_8)
+        return wrapMessage(MessageType.BOX_SETTINGS, payload)
+    }
+
+    fun airplayConfig(config: ProjectionSessionConfig): ByteArray = sendFile(
+        "/etc/airplay.conf",
+        generateAirplayConfig(config).toByteArray(Charsets.UTF_8),
+    )
+
+    fun oemIcon(config: ProjectionSessionConfig): ByteArray? =
+        config.oemBranding.oemIconPng?.let { sendFile("/etc/oem_icon.png", it) }
+
+    fun icon120(config: ProjectionSessionConfig): ByteArray? =
+        config.oemBranding.icon120Png?.let { sendFile("/etc/icon_120x120.png", it) }
+
+    fun icon180(config: ProjectionSessionConfig): ByteArray? =
+        config.oemBranding.icon180Png?.let { sendFile("/etc/icon_180x180.png", it) }
+
+    fun icon256(config: ProjectionSessionConfig): ByteArray? =
+        config.oemBranding.icon256Png?.let { sendFile("/etc/icon_256x256.png", it) }
 
     fun multiTouch(contacts: List<TouchContact>): ByteArray {
         val payload = ByteBuffer.allocate(contacts.size * 16).order(ByteOrder.LITTLE_ENDIAN)
@@ -323,6 +351,19 @@ object Cpc200Protocol {
         )
     }
 
+    fun parseDashboardData(payload: ByteArray): DashboardData {
+        require(payload.size >= 4) { "DashboardData payload must be at least 4 bytes." }
+        val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        val subtype = buffer.int
+        val body = ByteArray(buffer.remaining())
+        buffer.get(body)
+        val payloadText = body.toString(Charsets.UTF_8).trim('\u0000').trim()
+        return DashboardData(
+            subtype = subtype,
+            payloadText = payloadText,
+        )
+    }
+
     fun describePhoneType(phoneType: Int): String = when (phoneType) {
         PhoneType.ANDROID_MIRROR -> "AndroidMirror"
         PhoneType.CARPLAY -> "CarPlay"
@@ -359,6 +400,7 @@ object Cpc200Protocol {
         MessageType.UNKNOWN_37 -> "Unknown37"
         MessageType.UNKNOWN_38 -> "Unknown38"
         MessageType.MEDIA_DATA -> "MediaData"
+        MessageType.NAVI_VIDEO -> "NaviVideo"
         MessageType.SEND_FILE -> "SendFile"
         MessageType.HEARTBEAT -> "HeartBeat"
         MessageType.SOFTWARE_VERSION -> "SoftwareVersion"
@@ -418,6 +460,70 @@ object Cpc200Protocol {
         }
     }
 
+    private fun buildExtendedBoxSettingsJson(config: ExtendedBoxSettingsConfig): String {
+        val fields = buildList {
+            config.dashboardInfo?.let { addJsonField("DashboardInfo", it) }
+            config.gnssCapability?.let { addJsonField("GNSSCapability", it) }
+            config.hudGpsSwitch?.let { addJsonField("HudGPSSwitch", it) }
+            config.advancedFeatures?.let { addJsonField("AdvancedFeatures", it) }
+            config.naviScreenInfo?.let { navi ->
+                add(
+                    buildString {
+                        append('"')
+                        append("naviScreenInfo")
+                        append("\":{")
+                        appendJsonField("naviW", navi.naviW)
+                        append(',')
+                        appendJsonField("naviH", navi.naviH)
+                        append(',')
+                        appendJsonField("fps", navi.fps)
+                        append(',')
+                        appendJsonField("iBoxNaviType", navi.iBoxNaviType)
+                        append('}')
+                    },
+                )
+            }
+            config.additionalIntFields.forEach { (key, value) ->
+                addJsonField(key, value)
+            }
+            config.additionalBooleanFields.forEach { (key, value) ->
+                addJsonField(key, if (value) 1 else 0)
+            }
+            config.additionalStringFields.forEach { (key, value) ->
+                addJsonField(key, value)
+            }
+        }
+
+        return "{${fields.joinToString(",")}}"
+    }
+
+    private fun generateAirplayConfig(config: ProjectionSessionConfig): String = buildString {
+        append("oemIconVisible = ")
+        append(if (config.oemBranding.visible) 1 else 0)
+        append('\n')
+        append("name = ")
+        append(config.oemBranding.name)
+        append('\n')
+        append("model = ")
+        append(config.oemBranding.model)
+        append('\n')
+        append("oemIconPath = /etc/oem_icon.png\n")
+        append("oemIconLabel = ")
+        append(config.oemBranding.label)
+        append('\n')
+    }
+
+    private fun MutableList<String>.addJsonField(
+        key: String,
+        value: Any,
+    ) {
+        add(
+            buildString {
+                appendJsonField(key, value)
+            },
+        )
+    }
+
     private fun StringBuilder.appendJsonField(
         key: String,
         value: Any,
@@ -428,11 +534,24 @@ object Cpc200Protocol {
         when (value) {
             is String -> {
                 append('"')
-                append(value)
+                append(value.escapeJsonString())
                 append('"')
             }
 
             else -> append(value)
+        }
+    }
+
+    private fun String.escapeJsonString(): String = buildString(length) {
+        this@escapeJsonString.forEach { char ->
+            when (char) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(char)
+            }
         }
     }
 }

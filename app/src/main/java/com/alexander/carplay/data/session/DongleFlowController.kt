@@ -47,6 +47,10 @@ class DongleFlowController(
             SOURCE,
             "Queueing init sequence: ${config.width}x${config.height}@${config.fps} dpi=${config.dpi}",
         )
+        logStore.info(
+            SOURCE,
+            "Advanced adapter features require firmware flags: DashboardInfo=7, GNSSCapability=1/3, HudGPSSwitch=1, AdvancedFeatures=1",
+        )
         delegate.updateState(
             state = ProjectionConnectionState.INIT,
             message = "Queueing adapter init sequence",
@@ -116,7 +120,13 @@ class DongleFlowController(
         add(Cpc200Protocol.sendNumber("/tmp/hand_drive_mode", config.handDriveMode))
         add(Cpc200Protocol.sendBoolean("/tmp/charge_mode", true))
         add(Cpc200Protocol.sendString("/etc/box_name", config.boxName))
+        Cpc200Protocol.oemIcon(config)?.let { add(it) }
+        Cpc200Protocol.icon120(config)?.let { add(it) }
+        Cpc200Protocol.icon180(config)?.let { add(it) }
+        Cpc200Protocol.icon256(config)?.let { add(it) }
+        logStore.info(SOURCE, "Queueing OEM branding: ${config.oemBranding.label}")
         add(Cpc200Protocol.boxSettings(config))
+        add(Cpc200Protocol.airplayConfig(config))
         add(Cpc200Protocol.command(Cpc200Protocol.Command.WIFI_ENABLE))
         add(
             Cpc200Protocol.command(

@@ -252,6 +252,7 @@ class DongleSessionManager(
 
     fun attachSurface(surface: Surface) {
         surfaceAttached = true
+        logStore.info(SOURCE, "Projection surface attached")
         renderer.attachSurface(surface)
         executors.session.execute {
             flowController.onSurfaceAttached()
@@ -265,6 +266,7 @@ class DongleSessionManager(
 
     fun detachSurface() {
         surfaceAttached = false
+        logStore.info(SOURCE, "Projection surface detached")
         renderer.detachSurface()
         executors.session.execute {
             flowController.onSurfaceDetached()
@@ -532,6 +534,52 @@ class DongleSessionManager(
         logStore.info(SOURCE, "Message 0x${type.toString(16)} <- ${payload.toString(Charsets.UTF_8).take(160)}")
     }
 
+    private fun handleDashboardDataMessage(payload: ByteArray?) {
+        if (payload == null || payload.size < 4) {
+            logStore.info(SOURCE, "DashBoard_DATA payload is empty")
+            return
+        }
+
+        val dashboardData = runCatching {
+            Cpc200Protocol.parseDashboardData(payload)
+        }.getOrElse { error ->
+            logStore.error(SOURCE, "Failed to parse DashBoard_DATA", error)
+            return
+        }
+
+        val subtypeLabel = when (dashboardData.subtype) {
+            200 -> "NaviJSON"
+            else -> "subtype=${dashboardData.subtype}"
+        }
+
+        val compactPayload = dashboardData.payloadText
+            .replace(Regex("\\s+"), " ")
+            .take(500)
+
+        if (compactPayload.isBlank()) {
+            logStore.info(SOURCE, "DashBoard_DATA $subtypeLabel")
+        } else {
+            logStore.info(SOURCE, "DashBoard_DATA $subtypeLabel <- $compactPayload")
+        }
+    }
+
+    private fun handleNaviVideoMessage(
+        session: DongleConnectionSession,
+        payloadLength: Int,
+    ) {
+        val payload = session.readPayload(payloadLength, READ_TIMEOUT_MS)
+        if (payload.size < Cpc200Protocol.VIDEO_SUB_HEADER_SIZE) {
+            logStore.info(SOURCE, "NaviVideo packet too short: ${payload.size} bytes")
+            return
+        }
+
+        val meta = Cpc200Protocol.parseVideoMeta(payload, 0)
+        logStore.info(
+            SOURCE,
+            "NaviVideo packet ${meta.width}x${meta.height}, flags=${meta.flags}, data=${meta.dataLength}",
+        )
+    }
+
     private fun startReadLoop(session: DongleConnectionSession) {
         executors.usbRead.execute {
             try {
@@ -555,11 +603,13 @@ class DongleSessionManager(
                         continue
                     }
 
-                    if (header.type == Cpc200Protocol.MessageType.VIDEO) {
-                        handleVideoMessage(session, header.length)
-                    } else {
-                        val payload = session.readPayload(header.length, READ_TIMEOUT_MS)
-                        handleIncomingMessage(header.type, payload)
+                    when (header.type) {
+                        Cpc200Protocol.MessageType.VIDEO -> handleVideoMessage(session, header.length)
+                        Cpc200Protocol.MessageType.NAVI_VIDEO -> handleNaviVideoMessage(session, header.length)
+                        else -> {
+                            val payload = session.readPayload(header.length, READ_TIMEOUT_MS)
+                            handleIncomingMessage(header.type, payload)
+                        }
                     }
                     applyReplayPacing(header.type)
                 }
@@ -719,9 +769,12 @@ class DongleSessionManager(
             Cpc200Protocol.MessageType.BT_PIN,
             Cpc200Protocol.MessageType.HICAR,
             Cpc200Protocol.MessageType.MANUFACTURER_INFO,
-            Cpc200Protocol.MessageType.MEDIA_DATA,
             -> {
                 logProtocolTextMessage(type, payload)
+            }
+
+            Cpc200Protocol.MessageType.MEDIA_DATA -> {
+                handleDashboardDataMessage(payload)
             }
 
             Cpc200Protocol.MessageType.BT_DEVICE_NAME -> {
@@ -837,6 +890,10 @@ class DongleSessionManager(
 
         Cpc200Protocol.MessageType.SEND_FILE -> {
             "SendFile ${parseSendFilePath(payload)}"
+        }
+
+        Cpc200Protocol.MessageType.BOX_SETTINGS -> {
+            "BoxSettings ${payload.toString(Charsets.UTF_8).take(220)}"
         }
 
         else -> Cpc200Protocol.describeMessageType(type)
