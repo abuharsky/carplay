@@ -55,6 +55,18 @@ class RequestProjectionReconnectUseCase(
     operator fun invoke() = sessionPort.requestReconnect()
 }
 
+class SelectProjectionDeviceUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(deviceId: String) = sessionPort.selectDevice(deviceId)
+}
+
+class CancelProjectionDeviceConnectionUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.cancelDeviceConnection()
+}
+
 class AttachProjectionSurfaceUseCase(
     private val sessionPort: ProjectionSessionPort,
 ) {

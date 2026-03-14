@@ -7,14 +7,17 @@ import androidx.lifecycle.viewModelScope
 import com.alexander.carplay.R
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionConnectionState
+import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
+import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
+import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
 import com.alexander.carplay.domain.usecase.StartReplaySessionUseCase
 import com.alexander.carplay.domain.usecase.StartProjectionServiceUseCase
 import com.alexander.carplay.domain.usecase.StartUsbSessionUseCase
@@ -32,9 +35,21 @@ data class CarPlayUiState(
     val statusMessage: String,
     val overlayColorRes: Int,
     val showConnectButton: Boolean,
+    val showConnectionOverlay: Boolean,
+    val isStreaming: Boolean,
+    val devices: List<CarPlayDeviceUiState>,
     val diagnosticsText: String,
     val videoWidth: Int?,
     val videoHeight: Int?,
+)
+
+data class CarPlayDeviceUiState(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val isActive: Boolean,
+    val isSelected: Boolean,
+    val isConnecting: Boolean,
 )
 
 class CarPlayViewModel(
@@ -46,6 +61,8 @@ class CarPlayViewModel(
     private val bindProjectionUiUseCase: BindProjectionUiUseCase,
     private val unbindProjectionUiUseCase: UnbindProjectionUiUseCase,
     private val requestProjectionReconnectUseCase: RequestProjectionReconnectUseCase,
+    private val selectProjectionDeviceUseCase: SelectProjectionDeviceUseCase,
+    private val cancelProjectionDeviceConnectionUseCase: CancelProjectionDeviceConnectionUseCase,
     private val attachProjectionSurfaceUseCase: AttachProjectionSurfaceUseCase,
     private val detachProjectionSurfaceUseCase: DetachProjectionSurfaceUseCase,
     private val sendProjectionMotionUseCase: SendProjectionMotionUseCase,
@@ -90,6 +107,14 @@ class CarPlayViewModel(
         capturePath: String = DEFAULT_REPLAY_CAPTURE_PATH,
     ) {
         startReplaySessionUseCase(capturePath)
+    }
+
+    fun onDeviceSelected(deviceId: String) {
+        selectProjectionDeviceUseCase(deviceId)
+    }
+
+    fun onCancelDeviceConnection() {
+        cancelProjectionDeviceConnectionUseCase()
     }
 
     fun onSurfaceAvailable(surface: Surface) {
@@ -147,6 +172,9 @@ class CarPlayViewModel(
             }
         }.trimEnd()
 
+        val deviceItems = devices.map { it.toUiModel() }
+        val showConnectionOverlay = state != ProjectionConnectionState.STREAMING || !surfaceAttached
+
         return CarPlayUiState(
             stateLabel = stateLabel,
             statusMessage = statusMessage,
@@ -161,9 +189,31 @@ class CarPlayViewModel(
                 ProjectionConnectionState.ERROR -> R.color.status_error
             },
             showConnectButton = state != ProjectionConnectionState.STREAMING,
+            showConnectionOverlay = showConnectionOverlay,
+            isStreaming = state == ProjectionConnectionState.STREAMING && surfaceAttached,
+            devices = deviceItems,
             diagnosticsText = diagnosticsText,
             videoWidth = videoWidth,
             videoHeight = videoHeight,
+        )
+    }
+
+    private fun ProjectionDeviceSnapshot.toUiModel(): CarPlayDeviceUiState {
+        val subtitle = when {
+            isConnecting -> "Подключение..."
+            isActive -> "Доступно сейчас"
+            isSelected -> "Выбрано адаптером"
+            type != null -> type
+            else -> "Ранее использовалось"
+        }
+
+        return CarPlayDeviceUiState(
+            id = id,
+            title = name,
+            subtitle = subtitle,
+            isActive = isActive,
+            isSelected = isSelected,
+            isConnecting = isConnecting,
         )
     }
 }

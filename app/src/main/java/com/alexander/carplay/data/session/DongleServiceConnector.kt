@@ -127,6 +127,16 @@ class DongleServiceConnector(
         binder?.requestReconnect()
     }
 
+    fun selectDevice(deviceId: String) {
+        ensureServiceStarted()
+        binder?.selectDevice(deviceId)
+    }
+
+    fun cancelDeviceConnection() {
+        ensureServiceStarted()
+        binder?.cancelDeviceConnection()
+    }
+
     fun attachSurface(surface: Surface) {
         ensureServiceStarted()
         pendingSurface = surface

@@ -19,6 +19,7 @@ import com.alexander.carplay.data.usb.DongleConnectionSession
 import com.alexander.carplay.data.usb.UsbTransport
 import com.alexander.carplay.data.video.H264Renderer
 import com.alexander.carplay.domain.model.ProjectionConnectionState
+import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import java.io.File
 import java.nio.ByteBuffer
@@ -133,6 +134,8 @@ class DongleSessionManager(
     private var currentPhoneType: Int? = null
     private var currentSelectedDeviceId: String? = null
     private var currentActiveDeviceId: String? = null
+    private var pendingConnectionDeviceId: String? = null
+    private var pendingDeviceSelectionSent = false
     private var replayCapturePath: String? = null
     private var replayFrameDelayMs: Long = DEFAULT_REPLAY_FRAME_DELAY_MS
     private var heartbeatFuture: ScheduledFuture<*>? = null
@@ -247,6 +250,44 @@ class DongleSessionManager(
         executors.session.execute {
             if (!started) return@execute
             closeCurrentSession(reason, scheduleReconnect = true)
+        }
+    }
+
+    fun selectDevice(deviceId: String) {
+        executors.session.execute {
+            val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(deviceId).ifBlank { return@execute }
+            pendingConnectionDeviceId = normalizedId
+            pendingDeviceSelectionSent = false
+            logStore.info(SOURCE, "Manual device selection: ${describeKnownDevice(normalizedId)}")
+
+            if (!started) {
+                startUsbInternal("manual device selection")
+            }
+
+            sendPendingDeviceSelectionIfNeeded()
+            refreshState(
+                message = "Connecting to ${describeKnownDevice(normalizedId)}",
+                phoneDescription = describeKnownDevice(normalizedId),
+            )
+        }
+    }
+
+    fun cancelDeviceConnection() {
+        executors.session.execute {
+            val pendingId = pendingConnectionDeviceId
+            pendingConnectionDeviceId = null
+            pendingDeviceSelectionSent = false
+            if (currentSession != null) {
+                queueOutbound(Cpc200Protocol.disconnectPhone())
+            }
+            refreshState(
+                message = if (pendingId != null) {
+                    "Connection cancelled: ${describeKnownDevice(pendingId)}"
+                } else {
+                    "Connection cancelled"
+                },
+                phoneDescription = null,
+            )
         }
     }
 
@@ -435,6 +476,8 @@ class DongleSessionManager(
     private fun resetProjectionRuntime(reason: String) {
         currentSelectedDeviceId = null
         currentActiveDeviceId = null
+        pendingConnectionDeviceId = null
+        pendingDeviceSelectionSent = false
         knownDevices.clear()
         outboundQueue.clear()
         audioStreamManager.release()
@@ -461,6 +504,40 @@ class DongleSessionManager(
         devices.forEach(::rememberKnownDevice)
     }
 
+    private fun buildDeviceSnapshots(): List<ProjectionDeviceSnapshot> {
+        val ordered = linkedMapOf<String, DongleKnownDevice>()
+        knownDevices.forEach { (id, device) ->
+            ordered[id] = device.copy(id = id)
+        }
+
+        listOf(pendingConnectionDeviceId, currentSelectedDeviceId, currentActiveDeviceId)
+            .mapNotNull { id ->
+                id?.let(Cpc200Protocol::normalizeDeviceIdentifier)?.ifBlank { null }
+            }
+            .forEach { id ->
+                ordered.putIfAbsent(id, DongleKnownDevice(id = id))
+            }
+
+        return ordered.values
+            .map { device ->
+                val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(device.id)
+                ProjectionDeviceSnapshot(
+                    id = normalizedId,
+                    name = device.name ?: normalizedId,
+                    type = device.type,
+                    isActive = normalizedId == currentActiveDeviceId,
+                    isSelected = normalizedId == currentSelectedDeviceId,
+                    isConnecting = normalizedId == pendingConnectionDeviceId,
+                )
+            }
+            .sortedWith(
+                compareByDescending<ProjectionDeviceSnapshot> { it.isConnecting }
+                    .thenByDescending { it.isActive }
+                    .thenByDescending { it.isSelected }
+                    .thenBy { it.name.lowercase() },
+            )
+    }
+
     private fun describeKnownDevice(deviceId: String?): String {
         val normalizedId = deviceId
             ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
@@ -484,6 +561,39 @@ class DongleSessionManager(
         logStore.info(SOURCE, "BluetoothPairedList(${devices.size}): $entries")
     }
 
+    private fun refreshState(
+        state: ProjectionConnectionState = _state.value.state,
+        message: String = _state.value.statusMessage,
+        phoneDescription: String? = _state.value.phoneDescription,
+        adapterDescription: String? = _state.value.adapterDescription,
+        streamDescription: String? = _state.value.streamDescription,
+        videoWidth: Int? = _state.value.videoWidth,
+        videoHeight: Int? = _state.value.videoHeight,
+        lastError: String? = _state.value.lastError,
+    ) {
+        updateState(
+            state = state,
+            message = message,
+            adapterDescription = adapterDescription,
+            phoneDescription = phoneDescription,
+            streamDescription = streamDescription,
+            videoWidth = videoWidth,
+            videoHeight = videoHeight,
+            lastError = lastError,
+        )
+    }
+
+    private fun sendPendingDeviceSelectionIfNeeded() {
+        val pendingId = pendingConnectionDeviceId ?: return
+        if (pendingDeviceSelectionSent) return
+        if (currentSession == null) return
+
+        queueOutbound(Cpc200Protocol.selectDevice(pendingId))
+        queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.WIFI_CONNECT))
+        pendingDeviceSelectionSent = true
+        logStore.info(SOURCE, "Pending device select sent: ${describeKnownDevice(pendingId)}")
+    }
+
     private fun handleBoxSettingsMessage(payload: ByteArray) {
         val snapshot = DongleDeviceCatalogParser.parseBoxSettings(payload)
         if (snapshot == null) {
@@ -494,7 +604,8 @@ class DongleSessionManager(
         rememberKnownDevices(snapshot.devices)
         logBoxSettingsSnapshot(snapshot)
 
-        snapshot.activeDeviceId?.let { activeId ->
+        if (snapshot.activeDeviceId != null) {
+            val activeId = snapshot.activeDeviceId
             currentActiveDeviceId = activeId
             updateState(
                 state = _state.value.state,
@@ -503,7 +614,11 @@ class DongleSessionManager(
                 videoWidth = _state.value.videoWidth,
                 videoHeight = _state.value.videoHeight,
             )
+        } else {
+            refreshState()
         }
+
+        sendPendingDeviceSelectionIfNeeded()
     }
 
     private fun logBoxSettingsSnapshot(snapshot: DongleBoxSettingsSnapshot) {
@@ -666,6 +781,10 @@ class DongleSessionManager(
 
         val safeMeta = meta ?: return
         renderer.updateVideoFormat(safeMeta.width, safeMeta.height)
+        if (pendingConnectionDeviceId != null) {
+            pendingConnectionDeviceId = null
+            pendingDeviceSelectionSent = false
+        }
         flowController.onVideoFrameReceived(safeMeta.width, safeMeta.height)
 
         updateState(
@@ -712,6 +831,7 @@ class DongleSessionManager(
                     logStore.info(SOURCE, "Open acknowledged by adapter")
                 }
                 flowController.onDongleOpened()
+                sendPendingDeviceSelectionIfNeeded()
             }
 
             Cpc200Protocol.MessageType.PLUGGED -> {
@@ -751,12 +871,14 @@ class DongleSessionManager(
                 val safePayload = payload ?: return
                 currentSelectedDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
                 logStore.info(SOURCE, "Selected device: ${describeKnownDevice(currentSelectedDeviceId)}")
+                refreshState(phoneDescription = describeKnownDevice(currentSelectedDeviceId))
             }
 
             Cpc200Protocol.MessageType.ACTIVE_DEVICE -> {
                 val safePayload = payload ?: return
                 currentActiveDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
                 logStore.info(SOURCE, "Active device: ${describeKnownDevice(currentActiveDeviceId)}")
+                refreshState(phoneDescription = describeKnownDevice(currentActiveDeviceId))
             }
 
             Cpc200Protocol.MessageType.SOFTWARE_VERSION -> {
@@ -794,6 +916,8 @@ class DongleSessionManager(
                 val devices = DongleDeviceCatalogParser.parsePairedList(safePayload)
                 rememberKnownDevices(devices)
                 logPairedDevices(devices)
+                sendPendingDeviceSelectionIfNeeded()
+                refreshState()
             }
 
             Cpc200Protocol.MessageType.UNKNOWN_37,
@@ -940,6 +1064,7 @@ class DongleSessionManager(
         adapterDescription: String? = _state.value.adapterDescription,
         phoneDescription: String? = _state.value.phoneDescription,
         streamDescription: String? = _state.value.streamDescription,
+        devices: List<ProjectionDeviceSnapshot> = buildDeviceSnapshots(),
         videoWidth: Int? = _state.value.videoWidth,
         videoHeight: Int? = _state.value.videoHeight,
         surfaceAttached: Boolean = this.surfaceAttached,
@@ -951,6 +1076,7 @@ class DongleSessionManager(
             adapterDescription = adapterDescription,
             phoneDescription = phoneDescription,
             streamDescription = streamDescription,
+            devices = devices,
             videoWidth = videoWidth,
             videoHeight = videoHeight,
             surfaceAttached = surfaceAttached,

@@ -13,5 +13,10 @@
     <color name="status_streaming">#16A34A</color>
     <color name="status_error">#DC2626</color>
     <color name="launcher_bg">#0D1424</color>
+    <color name="device_chip_idle_bg">#D9161B24</color>
+    <color name="device_chip_idle_stroke">#33FFFFFF</color>
+    <color name="device_chip_pending_bg">#E21F334A</color>
+    <color name="device_chip_pending_stroke">#66B9D9FF</color>
+    <color name="device_chip_active_bg">#E2173B28</color>
+    <color name="device_chip_active_stroke">#6646D189</color>
 </resources>
-

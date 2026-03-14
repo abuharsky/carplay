@@ -6,6 +6,7 @@ data class ProjectionSessionSnapshot(
     val adapterDescription: String? = null,
     val phoneDescription: String? = null,
     val streamDescription: String? = null,
+    val devices: List<ProjectionDeviceSnapshot> = emptyList(),
     val videoWidth: Int? = null,
     val videoHeight: Int? = null,
     val surfaceAttached: Boolean = false,

@@ -177,6 +177,8 @@ object Cpc200Protocol {
 
     fun heartbeat(): ByteArray = buildHeader(MessageType.HEARTBEAT, 0)
 
+    fun disconnectPhone(): ByteArray = buildHeader(MessageType.DISCONNECT_PHONE, 0)
+
     fun command(commandId: Int): ByteArray = wrapMessage(
         MessageType.COMMAND,
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(commandId).array(),
@@ -461,6 +463,8 @@ object Cpc200Protocol {
     }
 
     private fun buildExtendedBoxSettingsJson(config: ExtendedBoxSettingsConfig): String {
+
+        
         val fields = buildList {
             config.dashboardInfo?.let { addJsonField("DashboardInfo", it) }
             config.gnssCapability?.let { addJsonField("GNSSCapability", it) }

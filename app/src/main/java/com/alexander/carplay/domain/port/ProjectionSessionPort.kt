@@ -22,6 +22,10 @@ interface ProjectionSessionPort {
 
     fun requestReconnect()
 
+    fun selectDevice(deviceId: String)
+
+    fun cancelDeviceConnection()
+
     fun attachSurface(surface: Surface)
 
     fun detachSurface()

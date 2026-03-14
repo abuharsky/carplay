@@ -145,6 +145,14 @@ class DongleService : Service() {
             sessionManager.requestReconnect()
         }
 
+        fun selectDevice(deviceId: String) {
+            sessionManager.selectDevice(deviceId)
+        }
+
+        fun cancelDeviceConnection() {
+            sessionManager.cancelDeviceConnection()
+        }
+
         fun attachSurface(surface: Surface) {
             sessionManager.attachSurface(surface)
         }

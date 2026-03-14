@@ -7,11 +7,13 @@ import com.alexander.carplay.data.session.DongleServiceSessionPort
 import com.alexander.carplay.domain.port.ProjectionSessionPort
 import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
+import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
+import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
 import com.alexander.carplay.domain.usecase.StartReplaySessionUseCase
 import com.alexander.carplay.domain.usecase.StartProjectionServiceUseCase
 import com.alexander.carplay.domain.usecase.StartUsbSessionUseCase
@@ -32,6 +34,8 @@ class AppContainer(application: Application) {
     val bindProjectionUiUseCase = BindProjectionUiUseCase(sessionPort)
     val unbindProjectionUiUseCase = UnbindProjectionUiUseCase(sessionPort)
     val requestProjectionReconnectUseCase = RequestProjectionReconnectUseCase(sessionPort)
+    val selectProjectionDeviceUseCase = SelectProjectionDeviceUseCase(sessionPort)
+    val cancelProjectionDeviceConnectionUseCase = CancelProjectionDeviceConnectionUseCase(sessionPort)
     val attachProjectionSurfaceUseCase = AttachProjectionSurfaceUseCase(sessionPort)
     val detachProjectionSurfaceUseCase = DetachProjectionSurfaceUseCase(sessionPort)
     val sendProjectionMotionUseCase = SendProjectionMotionUseCase(sessionPort)

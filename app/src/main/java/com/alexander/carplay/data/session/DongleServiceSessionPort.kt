@@ -25,6 +25,10 @@ class DongleServiceSessionPort(
 
     override fun requestReconnect() = connector.requestReconnect()
 
+    override fun selectDevice(deviceId: String) = connector.selectDevice(deviceId)
+
+    override fun cancelDeviceConnection() = connector.cancelDeviceConnection()
+
     override fun attachSurface(surface: Surface) = connector.attachSurface(surface)
 
     override fun detachSurface() = connector.detachSurface()

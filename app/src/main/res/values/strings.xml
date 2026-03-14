@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Настр. CarPlay</string>
+    <string name="app_name">Carlink</string>
     <string name="notification_channel_name">CarPlay adapter</string>
     <string name="notification_title">CarPlay adapter active</string>
     <string name="notification_text">Foreground service keeps the USB adapter session alive.</string>
@@ -18,4 +18,7 @@
     <string name="settings">Настройки</string>
     <string name="collapse_diagnostics">Свернуть диагностику</string>
     <string name="expand_diagnostics">Развернуть диагностику</string>
+    <string name="carplay_logo">CarPlay</string>
+    <string name="carplay_wordmark">CarPlay</string>
+    <string name="cancel_device_connection">Прервать подключение</string>
 </resources>

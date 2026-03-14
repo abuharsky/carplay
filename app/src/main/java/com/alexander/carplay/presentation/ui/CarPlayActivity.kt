@@ -2,6 +2,7 @@ package com.alexander.carplay.presentation.ui
 
 import android.Manifest
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.os.Build
@@ -9,10 +10,16 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
+import android.view.View
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -21,6 +28,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.alexander.carplay.CarPlayApp
 import com.alexander.carplay.databinding.ActivityCarPlayBinding
+import com.alexander.carplay.databinding.ItemProjectionDeviceBinding
+import com.alexander.carplay.presentation.viewmodel.CarPlayDeviceUiState
 import com.alexander.carplay.presentation.viewmodel.CarPlayUiState
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModel
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModelFactory
@@ -33,11 +42,21 @@ class CarPlayActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityCarPlayBinding
+    private lateinit var connectionOverlay: View
+    private lateinit var freezeFrameView: ImageView
+    private lateinit var overlayStateIndicator: TextView
+    private lateinit var overlayStatusText: TextView
+    private lateinit var deviceScrollView: HorizontalScrollView
+    private lateinit var deviceListContainer: LinearLayout
     private var diagnosticsCollapsed = false
     private var outputSurface: Surface? = null
     private var videoWidth = 0
     private var videoHeight = 0
     private var lastDiagnosticsText = ""
+    private var lastRenderedDevices: List<CarPlayDeviceUiState> = emptyList()
+    private var overlayVisible = true
+    private var lastStreaming = false
+    private var frozenFrameBitmap: Bitmap? = null
 
     private val viewModel: CarPlayViewModel by viewModels {
         CarPlayViewModelFactory((application as CarPlayApp).appContainer)
@@ -75,6 +94,12 @@ class CarPlayActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityCarPlayBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        connectionOverlay = findViewById(com.alexander.carplay.R.id.connectionOverlay)
+        freezeFrameView = findViewById(com.alexander.carplay.R.id.freezeFrameView)
+        overlayStateIndicator = findViewById(com.alexander.carplay.R.id.overlayStateIndicator)
+        overlayStatusText = findViewById(com.alexander.carplay.R.id.overlayStatusText)
+        deviceScrollView = findViewById(com.alexander.carplay.R.id.deviceScrollView)
+        deviceListContainer = findViewById(com.alexander.carplay.R.id.deviceListContainer)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
@@ -94,7 +119,7 @@ class CarPlayActivity : AppCompatActivity() {
             Toast.makeText(this, "Настройки добавим следующим шагом", Toast.LENGTH_SHORT).show()
         }
         binding.touchCapture.setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_DOWN || binding.connectButton.visibility != android.view.View.VISIBLE) {
+            if (!overlayVisible) {
                 viewModel.onTouchEvent(
                     event,
                     binding.touchCapture.width,
@@ -130,6 +155,8 @@ class CarPlayActivity : AppCompatActivity() {
         binding.projectionSurface.surfaceTextureListener = null
         outputSurface?.release()
         outputSurface = null
+        frozenFrameBitmap?.recycle()
+        frozenFrameBitmap = null
         super.onDestroy()
     }
 
@@ -151,12 +178,20 @@ class CarPlayActivity : AppCompatActivity() {
         binding.collapsedStateIndicator.text = uiState.stateLabel
         binding.collapsedStateIndicator.backgroundTintList =
             ColorStateList.valueOf(ContextCompat.getColor(this, uiState.overlayColorRes))
+        overlayStateIndicator.text = uiState.stateLabel
+        val subduedOverlayStateColor =
+            ColorUtils.setAlphaComponent(ContextCompat.getColor(this, uiState.overlayColorRes), 72)
+        overlayStateIndicator.backgroundTintList =
+            ColorStateList.valueOf(subduedOverlayStateColor)
         binding.statusMessage.text = uiState.statusMessage
         binding.collapsedStatusMessage.text = uiState.statusMessage
+        overlayStatusText.text = uiState.statusMessage
         videoWidth = uiState.videoWidth ?: 0
         videoHeight = uiState.videoHeight ?: 0
         updateSurfaceBufferSize()
         updateDiagnosticsText(uiState.diagnosticsText)
+        renderDevices(uiState.devices)
+        updateOverlayState(uiState.showConnectionOverlay, uiState.isStreaming)
         binding.connectButton.visibility = if (uiState.showConnectButton) {
             android.view.View.VISIBLE
         } else {
@@ -232,6 +267,96 @@ class CarPlayActivity : AppCompatActivity() {
         outputSurface = Surface(surfaceTexture)
         viewModel.onSurfaceAvailable(outputSurface!!)
         applyVideoTransform()
+    }
+
+    private fun renderDevices(devices: List<CarPlayDeviceUiState>) {
+        if (devices == lastRenderedDevices) return
+        lastRenderedDevices = devices
+
+        deviceListContainer.removeAllViews()
+        deviceScrollView.visibility = if (devices.isEmpty()) View.GONE else View.VISIBLE
+        devices.forEach { device ->
+            val itemBinding = ItemProjectionDeviceBinding.inflate(layoutInflater, deviceListContainer, false)
+            itemBinding.deviceTitle.text = device.title
+            itemBinding.deviceSubtitle.text = device.subtitle
+            itemBinding.deviceProgress.visibility = if (device.isConnecting) View.VISIBLE else View.GONE
+            itemBinding.deviceCancelButton.visibility = if (device.isConnecting) View.VISIBLE else View.GONE
+            itemBinding.deviceCancelButton.setOnClickListener { viewModel.onCancelDeviceConnection() }
+            itemBinding.deviceCard.setOnClickListener { viewModel.onDeviceSelected(device.id) }
+
+            val backgroundColor = when {
+                device.isActive -> com.alexander.carplay.R.color.device_chip_active_bg
+                device.isSelected || device.isConnecting -> com.alexander.carplay.R.color.device_chip_pending_bg
+                else -> com.alexander.carplay.R.color.device_chip_idle_bg
+            }
+            val strokeColor = when {
+                device.isActive -> com.alexander.carplay.R.color.device_chip_active_stroke
+                device.isSelected || device.isConnecting -> com.alexander.carplay.R.color.device_chip_pending_stroke
+                else -> com.alexander.carplay.R.color.device_chip_idle_stroke
+            }
+            itemBinding.deviceCard.setCardBackgroundColor(ContextCompat.getColor(this, backgroundColor))
+            itemBinding.deviceCard.strokeColor = ContextCompat.getColor(this, strokeColor)
+            deviceListContainer.addView(itemBinding.root)
+        }
+    }
+
+    private fun updateOverlayState(
+        shouldShowOverlay: Boolean,
+        isStreaming: Boolean,
+    ) {
+        if (lastStreaming && !isStreaming) {
+            captureFreezeFrame()
+        }
+        if (isStreaming) {
+            clearFreezeFrame()
+        }
+        lastStreaming = isStreaming
+
+        if (shouldShowOverlay == overlayVisible) return
+        overlayVisible = shouldShowOverlay
+
+        if (shouldShowOverlay) {
+            connectionOverlay.visibility = View.VISIBLE
+            connectionOverlay.alpha = 0f
+            connectionOverlay.animate().alpha(1f).setDuration(220L).start()
+            if (freezeFrameView.drawable != null) {
+                freezeFrameView.visibility = View.VISIBLE
+                freezeFrameView.alpha = 0f
+                freezeFrameView.animate().alpha(1f).setDuration(180L).start()
+            }
+        } else {
+            connectionOverlay.animate()
+                .alpha(0f)
+                .setDuration(220L)
+                .withEndAction {
+                    connectionOverlay.visibility = View.GONE
+                }
+                .start()
+            freezeFrameView.animate()
+                .alpha(0f)
+                .setDuration(180L)
+                .withEndAction {
+                    freezeFrameView.visibility = View.GONE
+                }
+                .start()
+        }
+    }
+
+    private fun captureFreezeFrame() {
+        val bitmap = binding.projectionSurface.bitmap ?: return
+        frozenFrameBitmap?.recycle()
+        frozenFrameBitmap = bitmap
+        freezeFrameView.setImageBitmap(bitmap)
+        freezeFrameView.alpha = 1f
+        freezeFrameView.visibility = View.VISIBLE
+    }
+
+    private fun clearFreezeFrame() {
+        freezeFrameView.setImageDrawable(null)
+        freezeFrameView.visibility = View.GONE
+        freezeFrameView.alpha = 0f
+        frozenFrameBitmap?.recycle()
+        frozenFrameBitmap = null
     }
 
     private fun hideSystemBars() {

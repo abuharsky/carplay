@@ -19,6 +19,8 @@ class CarPlayViewModelFactory(
             bindProjectionUiUseCase = appContainer.bindProjectionUiUseCase,
             unbindProjectionUiUseCase = appContainer.unbindProjectionUiUseCase,
             requestProjectionReconnectUseCase = appContainer.requestProjectionReconnectUseCase,
+            selectProjectionDeviceUseCase = appContainer.selectProjectionDeviceUseCase,
+            cancelProjectionDeviceConnectionUseCase = appContainer.cancelProjectionDeviceConnectionUseCase,
             attachProjectionSurfaceUseCase = appContainer.attachProjectionSurfaceUseCase,
             detachProjectionSurfaceUseCase = appContainer.detachProjectionSurfaceUseCase,
             sendProjectionMotionUseCase = appContainer.sendProjectionMotionUseCase,
