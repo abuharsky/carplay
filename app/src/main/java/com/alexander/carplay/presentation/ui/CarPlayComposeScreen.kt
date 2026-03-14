@@ -164,7 +164,6 @@ fun CarPlayRoute(
 
     var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var isSelectorExpanded by rememberSaveable { mutableStateOf(false) }
-    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(devices, sessionSnapshot.currentDeviceId) {
@@ -237,28 +236,12 @@ fun CarPlayRoute(
             }
         }
 
-        MinimalDiagnosticsButton(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(
-                    end = 20.dp,
-                    bottom = 20.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
-                ),
-            onClick = { showDiagnostics = true },
-        )
-
-        if (showDiagnostics) {
-            DiagnosticsDialog(
-                diagnosticsText = uiState.diagnosticsText,
-                onDismiss = { showDiagnostics = false },
-            )
-        }
-
         if (showSettings) {
             ScaledCarPlayUi {
                 ProjectionSettingsScreen(
                     deviceId = sessionSnapshot.currentDeviceId,
                     deviceName = sessionSnapshot.currentDeviceName,
+                    diagnosticsText = uiState.diagnosticsText,
                     viewModel = viewModel,
                     onDismiss = { showSettings = false },
                 )
@@ -451,7 +434,7 @@ private fun ConnectionOverlay(
             .padding(WindowInsets.safeDrawing.asPaddingValues()),
     ) {
         val logoTopOffset = maxHeight * 0.3f
-        val overlayBottomOffset = maxHeight * 0.2f
+        val overlayBottomOffset = maxHeight * 0.08f
         val hasDevices = devices.isNotEmpty()
 
         Row(
@@ -812,6 +795,7 @@ private fun DiagnosticsDialog(
 private fun ProjectionSettingsScreen(
     deviceId: String?,
     deviceName: String?,
+    diagnosticsText: String,
     viewModel: CarPlayViewModel,
     onDismiss: () -> Unit,
 ) {
@@ -908,6 +892,12 @@ private fun ProjectionSettingsScreen(
                                 micSettings = workingSettings.micSettings.copy(gainMultiplier = it),
                             )
                         },
+                    )
+                }
+
+                item {
+                    DiagnosticsSettingsSection(
+                        diagnosticsText = diagnosticsText,
                     )
                 }
             }
@@ -1405,6 +1395,37 @@ private fun MicrophoneSection(
                     onValueChange = onGainChanged,
                     valueRange = 1f..3f,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsSettingsSection(
+    diagnosticsText: String,
+) {
+    SettingsSectionCard(
+        title = stringResource(id = R.string.logs_title),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 180.dp, max = 280.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White.copy(alpha = 0.04f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+            ) {
+                item {
+                    Text(
+                        text = diagnosticsText,
+                        color = Color.White.copy(alpha = 0.82f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }

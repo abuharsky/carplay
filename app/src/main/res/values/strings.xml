@@ -14,7 +14,7 @@
     <string name="state_waiting_phone">WAITING_PHONE</string>
     <string name="state_streaming">STREAMING</string>
     <string name="state_error">ERROR</string>
-    <string name="logs_title">Diagnostic log</string>
+    <string name="logs_title">Диагностика</string>
     <string name="settings">Настройки</string>
     <string name="collapse_diagnostics">Свернуть диагностику</string>
     <string name="expand_diagnostics">Развернуть диагностику</string>
