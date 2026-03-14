@@ -31,6 +31,7 @@ data class ProjectionSessionConfig(
 ) {
     companion object {
         private const val DEFAULT_STREAM_FPS = 60
+        private const val DEFAULT_DPI = 160
         private const val SIZE_ALIGNMENT = 16
 
         fun fromContext(context: Context): ProjectionSessionConfig {
@@ -40,6 +41,7 @@ data class ProjectionSessionConfig(
                 width = displayWidth,
                 height = displayHeight,
                 fps = DEFAULT_STREAM_FPS,
+                dpi = DEFAULT_DPI,
                 audioTransferOn = true,
                 useBoxMic = true,
             )
