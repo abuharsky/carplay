@@ -9,6 +9,7 @@ import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
+import com.alexander.carplay.domain.model.ProjectionProtocolPhase
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
@@ -40,6 +41,8 @@ import java.util.Locale
 data class CarPlayUiState(
     val stateLabel: String,
     val statusMessage: String,
+    val protocolPhaseLabel: String?,
+    val protocolPhaseTitle: String?,
     val overlayColorRes: Int,
     val showConnectButton: Boolean,
     val showConnectionOverlay: Boolean,
@@ -177,6 +180,9 @@ class CarPlayViewModel(
         }
 
         val metadata = buildList {
+            if (protocolPhase != ProjectionProtocolPhase.NONE) {
+                add("phase=${protocolPhase.shortLabel}:${protocolPhase.title}")
+            }
             adapterDescription?.let { add("adapter=$it") }
             phoneDescription?.let { add("phone=$it") }
             streamDescription?.let { add("stream=$it") }
@@ -209,6 +215,8 @@ class CarPlayViewModel(
         return CarPlayUiState(
             stateLabel = stateLabel,
             statusMessage = statusMessage,
+            protocolPhaseLabel = protocolPhase.takeIf { it != ProjectionProtocolPhase.NONE }?.shortLabel,
+            protocolPhaseTitle = protocolPhase.takeIf { it != ProjectionProtocolPhase.NONE }?.title,
             overlayColorRes = when (state) {
                 ProjectionConnectionState.IDLE -> R.color.status_idle
                 ProjectionConnectionState.SEARCHING -> R.color.status_searching

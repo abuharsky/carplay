@@ -22,9 +22,11 @@ import com.alexander.carplay.data.video.H264Renderer
 import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
 import com.alexander.carplay.domain.model.ProjectionMicRoute
+import com.alexander.carplay.domain.model.ProjectionProtocolPhase
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSettingsPort
+import android.os.SystemClock
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -48,14 +50,6 @@ class DongleSessionManager(
         REPLAY,
     }
 
-    private enum class SessionStage {
-        IDLE,
-        INIT_SENT,
-        WAITING_PHONE,
-        PHONE_CONNECTED,
-        STREAMING,
-    }
-
     companion object {
         private const val SOURCE = "Session"
         private const val READ_TIMEOUT_MS = 1_000
@@ -63,7 +57,9 @@ class DongleSessionManager(
         private const val RECONNECT_DELAY_MS = 2_000L
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
+        private const val HEARTBEAT_TIMEOUT_MS = 15_000L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
+        private const val AUTO_CONNECT_RESCAN_INTERVAL_MS = 3_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
     }
 
@@ -108,6 +104,24 @@ class DongleSessionManager(
                 stopFrameRequestLoop()
             }
 
+            override fun startAutoConnectLoop(reason: String) {
+                this@DongleSessionManager.startAutoConnectLoop(reason)
+            }
+
+            override fun stopAutoConnectLoop() {
+                this@DongleSessionManager.stopAutoConnectLoop()
+            }
+
+            override fun startBleAdvertising(reason: String) {
+                this@DongleSessionManager.startBleAdvertising(reason)
+            }
+
+            override fun stopBleAdvertising() {
+                this@DongleSessionManager.stopBleAdvertising()
+            }
+
+            override fun hasKnownDevices(): Boolean = knownDevices.isNotEmpty()
+
             override fun prepareForDongleReinit(reason: String) {
                 resetProjectionRuntime(reason)
             }
@@ -122,11 +136,13 @@ class DongleSessionManager(
 
             override fun updateState(
                 state: ProjectionConnectionState,
+                protocolPhase: ProjectionProtocolPhase,
                 message: String,
                 phoneDescription: String?,
             ) {
                 this@DongleSessionManager.updateState(
                     state = state,
+                    protocolPhase = protocolPhase,
                     message = message,
                     phoneDescription = phoneDescription,
                     surfaceAttached = surfaceAttached,
@@ -137,7 +153,6 @@ class DongleSessionManager(
 
     private var started = false
     private var shuttingDown = false
-    private var sessionStage = SessionStage.IDLE
     private var sessionMode = SessionMode.USB
     private var surfaceAttached = false
     private var sessionConfig = ProjectionSessionConfig.fromContext(appContext)
@@ -147,13 +162,19 @@ class DongleSessionManager(
     private var currentPhoneType: Int? = null
     private var currentSelectedDeviceId: String? = null
     private var currentActiveDeviceId: String? = null
+    private var currentPeerBluetoothDeviceId: String? = null
     private var pendingConnectionDeviceId: String? = null
     private var pendingDeviceSelectionSent = false
     private var replayCapturePath: String? = null
     private var replayFrameDelayMs: Long = DEFAULT_REPLAY_FRAME_DELAY_MS
     private var heartbeatFuture: ScheduledFuture<*>? = null
     private var frameRequestFuture: ScheduledFuture<*>? = null
+    private var autoConnectFuture: ScheduledFuture<*>? = null
+    private var bleAdvertisingActive = false
     private var reconnectFuture: ScheduledFuture<*>? = null
+    private var lastInboundActivityAtMs = 0L
+    private var lastHeartbeatEchoAtMs = 0L
+    private var heartbeatTimeoutTriggered = false
     private var writeLoopStarted = false
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
@@ -213,7 +234,10 @@ class DongleSessionManager(
             outboundQueue.clear()
             audioStreamManager.release()
             renderer.release()
-            updateState(ProjectionConnectionState.IDLE, "Foreground service stopped")
+            updateState(
+                state = ProjectionConnectionState.IDLE,
+                message = "Foreground service stopped",
+            )
             executors.shutdown()
         }
     }
@@ -277,6 +301,7 @@ class DongleSessionManager(
     fun selectDevice(deviceId: String) {
         executors.session.execute {
             val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(deviceId).ifBlank { return@execute }
+            currentSelectedDeviceId = normalizedId
             pendingConnectionDeviceId = normalizedId
             pendingDeviceSelectionSent = false
             logStore.info(SOURCE, "Manual device selection: ${describeKnownDevice(normalizedId)}")
@@ -285,7 +310,7 @@ class DongleSessionManager(
                 startUsbInternal("manual device selection")
             }
 
-            sendPendingDeviceSelectionIfNeeded()
+            sendExplicitDeviceSelectionIfPossible()
             refreshState(
                 message = "Connecting to ${describeKnownDevice(normalizedId)}",
                 phoneDescription = describeKnownDevice(normalizedId),
@@ -298,6 +323,7 @@ class DongleSessionManager(
             val pendingId = pendingConnectionDeviceId
             pendingConnectionDeviceId = null
             pendingDeviceSelectionSent = false
+            currentPeerBluetoothDeviceId = null
             if (currentSession != null) {
                 queueOutbound(Cpc200Protocol.disconnectPhone())
             }
@@ -464,8 +490,15 @@ class DongleSessionManager(
 
     private fun startHeartbeatLoop() {
         heartbeatFuture?.cancel(false)
+        val now = SystemClock.elapsedRealtime()
+        lastInboundActivityAtMs = now
+        lastHeartbeatEchoAtMs = now
+        heartbeatTimeoutTriggered = false
         heartbeatFuture = executors.scheduler.scheduleAtFixedRate(
-            { queueOutbound(Cpc200Protocol.heartbeat()) },
+            {
+                queueOutbound(Cpc200Protocol.heartbeat())
+                checkHeartbeatTimeout()
+            },
             HEARTBEAT_INTERVAL_SECONDS,
             HEARTBEAT_INTERVAL_SECONDS,
             TimeUnit.SECONDS,
@@ -476,17 +509,33 @@ class DongleSessionManager(
     private fun stopHeartbeatLoop() {
         heartbeatFuture?.cancel(false)
         heartbeatFuture = null
+        heartbeatTimeoutTriggered = false
+    }
+
+    private fun checkHeartbeatTimeout() {
+        if (sessionMode != SessionMode.USB) return
+        if (currentSession == null || shuttingDown || !started) return
+        if (heartbeatTimeoutTriggered) return
+        val silenceMs = SystemClock.elapsedRealtime() - lastInboundActivityAtMs
+        if (silenceMs < HEARTBEAT_TIMEOUT_MS) return
+
+        heartbeatTimeoutTriggered = true
+        logStore.info(
+            SOURCE,
+            "Heartbeat timeout after ${silenceMs}ms without inbound adapter activity; reconnecting USB session",
+        )
+        closeCurrentSession("heartbeat timeout", scheduleReconnect = true)
     }
 
     private fun startFrameRequestLoop() {
         frameRequestFuture?.cancel(false)
         frameRequestFuture = executors.scheduler.scheduleAtFixedRate(
-            { queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.FRAME_REQUEST)) },
+            { queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.REQUEST_KEY_FRAME)) },
             FRAME_REQUEST_INTERVAL_MS,
             FRAME_REQUEST_INTERVAL_MS,
             TimeUnit.MILLISECONDS,
         )
-        logStore.info(SOURCE, "Frame request loop started (${FRAME_REQUEST_INTERVAL_MS}ms interval)")
+        logStore.info(SOURCE, "Key frame loop started (${FRAME_REQUEST_INTERVAL_MS}ms interval)")
     }
 
     private fun stopFrameRequestLoop() {
@@ -494,13 +543,70 @@ class DongleSessionManager(
         frameRequestFuture = null
     }
 
+    private fun startAutoConnectLoop(reason: String) {
+        if (currentSession == null || !started || shuttingDown) return
+        if (autoConnectFuture != null) return
+        emitAutoConnectRequest()
+
+        autoConnectFuture = executors.scheduler.scheduleAtFixedRate(
+            { emitAutoConnectRequest() },
+            AUTO_CONNECT_RESCAN_INTERVAL_MS,
+            AUTO_CONNECT_RESCAN_INTERVAL_MS,
+            TimeUnit.MILLISECONDS,
+        )
+        logStore.info(
+            SOURCE,
+            "Auto-connect rescan loop started (${AUTO_CONNECT_RESCAN_INTERVAL_MS}ms): $reason",
+        )
+    }
+
+    private fun stopAutoConnectLoop() {
+        val future = autoConnectFuture ?: return
+        future.cancel(false)
+        autoConnectFuture = null
+        logStore.info(SOURCE, "Auto-connect rescan loop stopped")
+    }
+
+    private fun startBleAdvertising(reason: String) {
+        if (currentSession == null || !started || shuttingDown) return
+        if (bleAdvertisingActive) return
+        stopAutoConnectLoop()
+        bleAdvertisingActive = true
+        queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.START_BLE_ADV))
+        logStore.info(SOURCE, "BLE advertising enabled: $reason")
+    }
+
+    private fun stopBleAdvertising() {
+        if (!bleAdvertisingActive) return
+        bleAdvertisingActive = false
+        if (currentSession != null && started && !shuttingDown) {
+            queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.STOP_BLE_ADV))
+        }
+        logStore.info(SOURCE, "BLE advertising disabled")
+    }
+
+    private fun emitAutoConnectRequest() {
+        val selectedId = currentSelectedDeviceId
+            ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
+            ?.ifBlank { null }
+        if (selectedId != null) {
+            queueOutbound(Cpc200Protocol.selectDevice(selectedId))
+        }
+        queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.START_AUTO_CONNECT))
+    }
+
     private fun resetProjectionRuntime(reason: String) {
-        currentSelectedDeviceId = null
         currentActiveDeviceId = null
+        currentPeerBluetoothDeviceId = null
         pendingConnectionDeviceId = null
         pendingDeviceSelectionSent = false
         knownDevices.clear()
         outboundQueue.clear()
+        stopAutoConnectLoop()
+        bleAdvertisingActive = false
+        lastInboundActivityAtMs = 0L
+        lastHeartbeatEchoAtMs = 0L
+        heartbeatTimeoutTriggered = false
         audioStreamManager.release()
         audioStreamManager.updateDeviceSettings(null)
         renderer.softReset()
@@ -535,8 +641,8 @@ class DongleSessionManager(
         val deviceSettings = settingsStore.getSettings(preferredDeviceId)
 
         return baseConfig.copy(
-            audioTransferOn = deviceSettings.audioRoute != ProjectionAudioRoute.ADAPTER,
-            useBoxMic = deviceSettings.micRoute == ProjectionMicRoute.ADAPTER,
+            useBluetoothAudio = deviceSettings.audioRoute == ProjectionAudioRoute.CAR_BLUETOOTH,
+            useAdapterMic = deviceSettings.micRoute == ProjectionMicRoute.ADAPTER,
         )
     }
 
@@ -571,6 +677,13 @@ class DongleSessionManager(
                 ordered.putIfAbsent(id, DongleKnownDevice(id = id))
             }
 
+        currentPeerBluetoothDeviceId
+            ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
+            ?.ifBlank { null }
+            ?.let { id ->
+                ordered.putIfAbsent(id, DongleKnownDevice(id = id))
+            }
+
         return ordered.values
             .map { device ->
                 val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(device.id)
@@ -580,7 +693,7 @@ class DongleSessionManager(
                     type = device.type,
                     isActive = normalizedId == currentActiveDeviceId,
                     isSelected = normalizedId == currentSelectedDeviceId,
-                    isConnecting = normalizedId == pendingConnectionDeviceId,
+                    isConnecting = normalizedId == pendingConnectionDeviceId || normalizedId == currentPeerBluetoothDeviceId,
                 )
             }
             .sortedWith(
@@ -636,15 +749,15 @@ class DongleSessionManager(
         )
     }
 
-    private fun sendPendingDeviceSelectionIfNeeded() {
+    private fun sendExplicitDeviceSelectionIfPossible() {
         val pendingId = pendingConnectionDeviceId ?: return
         if (pendingDeviceSelectionSent) return
         if (currentSession == null) return
 
         queueOutbound(Cpc200Protocol.selectDevice(pendingId))
-        queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.WIFI_CONNECT))
+        queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.START_AUTO_CONNECT))
         pendingDeviceSelectionSent = true
-        logStore.info(SOURCE, "Pending device select sent: ${describeKnownDevice(pendingId)}")
+        logStore.info(SOURCE, "AutoConnect_By_BluetoothAddress sent: ${describeKnownDevice(pendingId)}")
     }
 
     private fun handleBoxSettingsMessage(payload: ByteArray) {
@@ -673,7 +786,6 @@ class DongleSessionManager(
             refreshState()
         }
 
-        sendPendingDeviceSelectionIfNeeded()
     }
 
     private fun logBoxSettingsSnapshot(snapshot: DongleBoxSettingsSnapshot) {
@@ -864,7 +976,12 @@ class DongleSessionManager(
         type: Int,
         payload: ByteArray?,
     ) {
+        lastInboundActivityAtMs = SystemClock.elapsedRealtime()
         when (type) {
+            Cpc200Protocol.MessageType.HEARTBEAT -> {
+                lastHeartbeatEchoAtMs = lastInboundActivityAtMs
+            }
+
             Cpc200Protocol.MessageType.OPEN -> {
                 if (payload != null) {
                     val openedInfo = Cpc200Protocol.parseOpen(payload)
@@ -886,12 +1003,12 @@ class DongleSessionManager(
                     logStore.info(SOURCE, "Open acknowledged by adapter")
                 }
                 flowController.onDongleOpened()
-                sendPendingDeviceSelectionIfNeeded()
             }
 
             Cpc200Protocol.MessageType.PLUGGED -> {
                 val safePayload = payload ?: return
                 val pluggedInfo = Cpc200Protocol.parsePlugged(safePayload)
+                currentPhoneType = pluggedInfo.phoneType
                 logStore.info(
                     SOURCE,
                     "Phone plugged: ${Cpc200Protocol.describePhoneType(pluggedInfo.phoneType)}, wifi=${pluggedInfo.wifiState}",
@@ -902,19 +1019,36 @@ class DongleSessionManager(
             Cpc200Protocol.MessageType.PHASE -> {
                 val safePayload = payload ?: return
                 val phase = Cpc200Protocol.parsePhase(safePayload)
+                if (phase == 0 || phase == 13) {
+                    currentPhoneType = null
+                    currentActiveDeviceId = null
+                    currentPeerBluetoothDeviceId = null
+                }
                 logStore.info(SOURCE, "Phase message: $phase")
                 flowController.onPhase(phase)
             }
 
             Cpc200Protocol.MessageType.UNPLUGGED -> {
+                currentPhoneType = null
+                currentActiveDeviceId = null
+                currentPeerBluetoothDeviceId = null
                 logStore.info(SOURCE, "Phone unplugged")
                 flowController.onUnplugged()
             }
 
             Cpc200Protocol.MessageType.COMMAND -> {
                 val safePayload = payload ?: return
-                val command = Cpc200Protocol.parseCommand(safePayload)
+                val envelope = Cpc200Protocol.parseCommandEnvelope(safePayload)
+                val command = envelope.commandId
+                if (command == Cpc200Protocol.Command.BT_DISCONNECTED) {
+                    currentPeerBluetoothDeviceId = null
+                }
                 logStore.info(SOURCE, "Adapter command: ${Cpc200Protocol.describeCommand(command)}")
+                if (command == Cpc200Protocol.Command.DISABLE_BLUETOOTH && envelope.extraPayload.isNotEmpty()) {
+                    Cpc200Protocol.parsePhoneBluetoothMac(safePayload)?.let { phoneBtMac ->
+                        logStore.info(SOURCE, "Phone Bluetooth MAC: $phoneBtMac")
+                    }
+                }
                 flowController.onCommand(command)
             }
 
@@ -922,21 +1056,44 @@ class DongleSessionManager(
                 payload?.let(::handleBoxSettingsMessage)
             }
 
-            Cpc200Protocol.MessageType.SELECTED_DEVICE -> {
+            Cpc200Protocol.MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS -> {
                 val safePayload = payload ?: return
-                currentSelectedDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
-                logStore.info(SOURCE, "Selected device: ${describeKnownDevice(currentSelectedDeviceId)}")
-                applyRuntimeDeviceSettings()
-                refreshState(phoneDescription = describeKnownDevice(currentSelectedDeviceId))
+                val deviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
+                currentPeerBluetoothDeviceId = deviceId
+                logStore.info(SOURCE, "AutoConnect_By_BluetoothAddress <- ${describeKnownDevice(deviceId)}")
+                refreshState(phoneDescription = describeKnownDevice(deviceId))
             }
 
-            Cpc200Protocol.MessageType.ACTIVE_DEVICE -> {
+            Cpc200Protocol.MessageType.BLUETOOTH_CONNECT_START -> {
                 val safePayload = payload ?: return
-                currentActiveDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
-                currentActiveDeviceId?.let(settingsStore::setLastConnectedDeviceId)
-                logStore.info(SOURCE, "Active device: ${describeKnownDevice(currentActiveDeviceId)}")
-                applyRuntimeDeviceSettings()
-                refreshState(phoneDescription = describeKnownDevice(currentActiveDeviceId))
+                currentPeerBluetoothDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
+                logStore.info(SOURCE, "BluetoothConnectStart: ${describeKnownDevice(currentPeerBluetoothDeviceId)}")
+                refreshState(phoneDescription = describeKnownDevice(currentPeerBluetoothDeviceId))
+            }
+
+            Cpc200Protocol.MessageType.BLUETOOTH_CONNECTED -> {
+                val safePayload = payload ?: return
+                currentPeerBluetoothDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
+                logStore.info(SOURCE, "BluetoothConnected: ${describeKnownDevice(currentPeerBluetoothDeviceId)}")
+                refreshState(phoneDescription = describeKnownDevice(currentPeerBluetoothDeviceId))
+            }
+
+            Cpc200Protocol.MessageType.BLUETOOTH_DISCONNECT -> {
+                logStore.info(SOURCE, "BluetoothDisconnect")
+                currentPeerBluetoothDeviceId = null
+                refreshState()
+            }
+
+            Cpc200Protocol.MessageType.BLUETOOTH_LISTEN -> {
+                payload
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let(Cpc200Protocol::parseDeviceIdentifier)
+                    ?.let { deviceId ->
+                        currentPeerBluetoothDeviceId = deviceId
+                        logStore.info(SOURCE, "BluetoothListen: ${describeKnownDevice(deviceId)}")
+                        refreshState(phoneDescription = describeKnownDevice(deviceId))
+                    }
+                    ?: logStore.info(SOURCE, "BluetoothListen")
             }
 
             Cpc200Protocol.MessageType.SOFTWARE_VERSION -> {
@@ -974,15 +1131,8 @@ class DongleSessionManager(
                 val devices = DongleDeviceCatalogParser.parsePairedList(safePayload)
                 rememberKnownDevices(devices)
                 logPairedDevices(devices)
-                sendPendingDeviceSelectionIfNeeded()
                 applyRuntimeDeviceSettings()
                 refreshState()
-            }
-
-            Cpc200Protocol.MessageType.UNKNOWN_37,
-            Cpc200Protocol.MessageType.UNKNOWN_38,
-            -> {
-                logProtocolTextMessage(type, payload)
             }
 
             Cpc200Protocol.MessageType.AUDIO -> {
@@ -1067,8 +1217,8 @@ class DongleSessionManager(
             "Command ${Cpc200Protocol.describeCommand(command)}"
         }
 
-        Cpc200Protocol.MessageType.SELECT_BT_DEVICE -> {
-            "SelectBtDevice ${Cpc200Protocol.parseDeviceIdentifier(payload)}"
+        Cpc200Protocol.MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS -> {
+            "AutoConnectByBluetoothAddress ${Cpc200Protocol.parseDeviceIdentifier(payload)}"
         }
 
         Cpc200Protocol.MessageType.SEND_FILE -> {
@@ -1119,6 +1269,7 @@ class DongleSessionManager(
 
     private fun updateState(
         state: ProjectionConnectionState,
+        protocolPhase: ProjectionProtocolPhase = _state.value.protocolPhase,
         message: String,
         adapterDescription: String? = _state.value.adapterDescription,
         phoneDescription: String? = _state.value.phoneDescription,
@@ -1131,6 +1282,7 @@ class DongleSessionManager(
     ) {
         _state.value = ProjectionSessionSnapshot(
             state = state,
+            protocolPhase = protocolPhase,
             statusMessage = message,
             adapterDescription = adapterDescription,
             phoneDescription = phoneDescription,
@@ -1138,12 +1290,12 @@ class DongleSessionManager(
             currentDeviceName = resolveCurrentDeviceName(resolveCurrentDeviceId()),
             streamDescription = streamDescription,
             devices = devices,
-            appliedAudioRoute = if (sessionConfig.audioTransferOn) {
+            appliedAudioRoute = if (sessionConfig.useBluetoothAudio) {
                 ProjectionAudioRoute.CAR_BLUETOOTH
             } else {
                 ProjectionAudioRoute.ADAPTER
             },
-            appliedMicRoute = if (sessionConfig.useBoxMic) {
+            appliedMicRoute = if (sessionConfig.useAdapterMic) {
                 ProjectionMicRoute.ADAPTER
             } else {
                 ProjectionMicRoute.PHONE

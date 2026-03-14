@@ -56,6 +56,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,6 +73,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -79,10 +82,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alexander.carplay.R
 import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
@@ -110,6 +116,8 @@ private val AppColorScheme = darkColorScheme(
     onSecondary = Color(0xFF071019),
 )
 
+private const val CARPLAY_UI_SCALE = 0.7f
+
 @Composable
 fun CarPlayComposeTheme(
     content: @Composable () -> Unit,
@@ -118,6 +126,22 @@ fun CarPlayComposeTheme(
         colorScheme = AppColorScheme,
         content = content,
     )
+}
+
+@Composable
+private fun ScaledCarPlayUi(
+    content: @Composable () -> Unit,
+) {
+    val baseDensity = LocalDensity.current
+    val scaledDensity = remember(baseDensity) {
+        Density(
+            density = baseDensity.density * CARPLAY_UI_SCALE,
+            fontScale = baseDensity.fontScale,
+        )
+    }
+    CompositionLocalProvider(LocalDensity provides scaledDensity) {
+        content()
+    }
 }
 
 @Composable
@@ -184,28 +208,30 @@ fun CarPlayRoute(
             exit = fadeOut(animationSpec = tween(420)),
             modifier = Modifier.fillMaxSize(),
         ) {
-            ConnectionOverlay(
-                uiState = uiState,
-                devices = devices,
-                selectedDevice = selectedDevice,
-                isSelectorExpanded = isSelectorExpanded,
-                onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
-                onSelectorDismiss = { isSelectorExpanded = false },
-                onDeviceSelected = { device ->
-                    selectedDeviceId = device.id
-                    isSelectorExpanded = false
-                },
-                onActionClick = {
-                    when {
-                        shouldShowStop -> viewModel.onCancelDeviceConnection()
-                        selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
-                        else -> viewModel.onConnectClicked()
-                    }
-                },
-                onReplayClick = { viewModel.onReplayClicked() },
-                connectActionEnabled = connectActionEnabled,
-                showStopAction = shouldShowStop,
-            )
+            ScaledCarPlayUi {
+                ConnectionOverlay(
+                    uiState = uiState,
+                    devices = devices,
+                    selectedDevice = selectedDevice,
+                    isSelectorExpanded = isSelectorExpanded,
+                    onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
+                    onSelectorDismiss = { isSelectorExpanded = false },
+                    onDeviceSelected = { device ->
+                        selectedDeviceId = device.id
+                        isSelectorExpanded = false
+                    },
+                    onActionClick = {
+                        when {
+                            shouldShowStop -> viewModel.onCancelDeviceConnection()
+                            selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
+                            else -> viewModel.onConnectClicked()
+                        }
+                    },
+                    onReplayClick = { viewModel.onReplayClicked() },
+                    connectActionEnabled = connectActionEnabled,
+                    showStopAction = shouldShowStop,
+                )
+            }
         }
 
         MinimalDiagnosticsButton(
@@ -226,12 +252,14 @@ fun CarPlayRoute(
         }
 
         if (showSettings) {
-            ProjectionSettingsScreen(
-                deviceId = sessionSnapshot.currentDeviceId,
-                deviceName = sessionSnapshot.currentDeviceName,
-                viewModel = viewModel,
-                onDismiss = { showSettings = false },
-            )
+            ScaledCarPlayUi {
+                ProjectionSettingsScreen(
+                    deviceId = sessionSnapshot.currentDeviceId,
+                    deviceName = sessionSnapshot.currentDeviceName,
+                    viewModel = viewModel,
+                    onDismiss = { showSettings = false },
+                )
+            }
         }
     }
 }
@@ -246,13 +274,59 @@ private fun ProjectionTextureSurface(
     val latestViewModel by rememberUpdatedState(viewModel)
     val latestVideoWidth by rememberUpdatedState(videoWidth)
     val latestVideoHeight by rememberUpdatedState(videoHeight)
+    val lifecycleOwner = LocalLifecycleOwner.current
     var textureSurface by remember { mutableStateOf<AndroidSurface?>(null) }
+    var textureViewRef by remember { mutableStateOf<TextureView?>(null) }
+    var surfaceBoundToSession by remember { mutableStateOf(false) }
+
+    fun bindSurfaceIfPossible(textureView: TextureView?) {
+        val view = textureView ?: return
+        if (!view.isAvailable) return
+        val surfaceTexture = view.surfaceTexture ?: return
+        val width = latestVideoWidth
+        val height = latestVideoHeight
+        if (width != null && height != null) {
+            surfaceTexture.setDefaultBufferSize(width, height)
+        }
+        if (textureSurface == null) {
+            textureSurface = AndroidSurface(surfaceTexture)
+        }
+        if (!surfaceBoundToSession) {
+            latestViewModel.onSurfaceAvailable(requireNotNull(textureSurface))
+            surfaceBoundToSession = true
+        }
+    }
+
+    fun unbindSurfaceFromSession() {
+        if (surfaceBoundToSession) {
+            latestViewModel.onSurfaceDestroyed()
+            surfaceBoundToSession = false
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
-            latestViewModel.onSurfaceDestroyed()
+            unbindSurfaceFromSession()
             textureSurface?.release()
             textureSurface = null
+            textureViewRef = null
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START,
+                Lifecycle.Event.ON_RESUME,
+                -> bindSurfaceIfPossible(textureViewRef)
+
+                Lifecycle.Event.ON_STOP -> unbindSurfaceFromSession()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -261,17 +335,10 @@ private fun ProjectionTextureSurface(
         factory = { context ->
             TextureView(context).apply {
                 keepScreenOn = true
+                textureViewRef = this
 
                 fun attachSurface(surfaceTexture: SurfaceTexture) {
-                    val width = latestVideoWidth
-                    val height = latestVideoHeight
-                    if (width != null && height != null) {
-                        surfaceTexture.setDefaultBufferSize(width, height)
-                    }
-                    if (textureSurface == null) {
-                        textureSurface = AndroidSurface(surfaceTexture)
-                        latestViewModel.onSurfaceAvailable(requireNotNull(textureSurface))
-                    }
+                    bindSurfaceIfPossible(this)
                 }
 
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -296,8 +363,10 @@ private fun ProjectionTextureSurface(
                     }
 
                     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                        unbindSurfaceFromSession()
                         textureSurface?.release()
                         textureSurface = null
+                        textureViewRef = null
                         return true
                     }
 
@@ -310,19 +379,14 @@ private fun ProjectionTextureSurface(
             }
         },
         update = { textureView ->
+            textureViewRef = textureView
             val width = videoWidth
             val height = videoHeight
             if (width != null && height != null) {
                 textureView.surfaceTexture?.setDefaultBufferSize(width, height)
             }
-            if (textureView.isAvailable && textureSurface == null) {
-                textureView.surfaceTexture?.let { surfaceTexture ->
-                    if (width != null && height != null) {
-                        surfaceTexture.setDefaultBufferSize(width, height)
-                    }
-                    textureSurface = AndroidSurface(surfaceTexture)
-                    latestViewModel.onSurfaceAvailable(requireNotNull(textureSurface))
-                }
+            if (textureView.isAvailable) {
+                bindSurfaceIfPossible(textureView)
             }
             textureView.setOnTouchListener(
                 if (touchEnabled) {
@@ -409,6 +473,22 @@ private fun ConnectionOverlay(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = 420.dp),
             )
+
+            if (uiState.protocolPhaseLabel != null && uiState.protocolPhaseTitle != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color.White.copy(alpha = 0.08f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                ) {
+                    Text(
+                        text = "${uiState.protocolPhaseLabel}  ${uiState.protocolPhaseTitle}",
+                        color = Color.White.copy(alpha = 0.72f),
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(28.dp))
 

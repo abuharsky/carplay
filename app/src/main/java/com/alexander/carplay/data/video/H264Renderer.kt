@@ -106,6 +106,8 @@ class H264Renderer(
         executors.codecOutput.execute {
             synchronized(lock) {
                 try {
+                    // Input indexes obtained before flush are no longer valid afterwards.
+                    availableInputBufferIndexes.clear()
                     codec?.flush()
                     codec?.start()
                     log("Codec soft reset (flush/start)")
@@ -253,25 +255,35 @@ class H264Renderer(
             while (availableInputBufferIndexes.isNotEmpty() && ringBuffer.availablePacketsToRead() > 0) {
                 val inputBufferIndex = availableInputBufferIndexes.removeFirst()
                 val packet = ringBuffer.readPacket()
-                if (!packet.hasRemaining()) {
-                    targetCodec.queueInputBuffer(inputBufferIndex, 0, 0, nextPtsUs(), 0)
-                    continue
-                }
+                try {
+                    if (!packet.hasRemaining()) {
+                        targetCodec.queueInputBuffer(inputBufferIndex, 0, 0, nextPtsUs(), 0)
+                        continue
+                    }
 
-                val codecBuffer = targetCodec.getInputBuffer(inputBufferIndex) ?: continue
-                codecBuffer.clear()
-                val size = packet.remaining()
-                if (size > codecBuffer.remaining()) {
+                    val codecBuffer = targetCodec.getInputBuffer(inputBufferIndex) ?: continue
+                    codecBuffer.clear()
+                    val size = packet.remaining()
+                    if (size > codecBuffer.remaining()) {
+                        logStore.error(
+                            SOURCE,
+                            "Input packet too large for codec buffer ($size > ${codecBuffer.remaining()})",
+                        )
+                        hardReset("input packet overflow")
+                        return
+                    }
+
+                    putByteBuffer(codecBuffer, packet)
+                    targetCodec.queueInputBuffer(inputBufferIndex, 0, size, nextPtsUs(), 0)
+                } catch (t: Throwable) {
                     logStore.error(
                         SOURCE,
-                        "Input packet too large for codec buffer ($size > ${codecBuffer.remaining()})",
+                        "Codec input buffer became invalid during drain; recreating decoder",
+                        t,
                     )
-                    hardReset("input packet overflow")
+                    hardReset("stale codec input buffer")
                     return
                 }
-
-                putByteBuffer(codecBuffer, packet)
-                targetCodec.queueInputBuffer(inputBufferIndex, 0, size, nextPtsUs(), 0)
             }
         }
     }

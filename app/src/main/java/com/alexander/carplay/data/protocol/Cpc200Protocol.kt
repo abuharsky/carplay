@@ -31,7 +31,7 @@ object Cpc200Protocol {
         const val COMMAND = 0x08
         const val LOGO_TYPE = 0x09
         const val BT_ADDRESS = 0x0A
-        const val SELECT_BT_DEVICE = 0x11
+        const val AUTO_CONNECT_BY_BLUETOOTH_ADDRESS = 0x11
         const val BT_PIN = 0x0C
         const val BT_DEVICE_NAME = 0x0D
         const val WIFI_DEVICE_NAME = 0x0E
@@ -42,35 +42,46 @@ object Cpc200Protocol {
         const val MULTI_TOUCH = 0x17
         const val HICAR = 0x18
         const val BOX_SETTINGS = 0x19
-        const val SELECTED_DEVICE = 0x23
-        const val ACTIVE_DEVICE = 0x24
-        const val UNKNOWN_37 = 0x25
-        const val UNKNOWN_38 = 0x26
+        const val BLUETOOTH_CONNECT_START = 0x23
+        const val BLUETOOTH_CONNECTED = 0x24
+        const val BLUETOOTH_DISCONNECT = 0x25
+        const val BLUETOOTH_LISTEN = 0x26
         const val MEDIA_DATA = 0x2A
         const val NAVI_VIDEO = 0x2C
         const val SEND_FILE = 0x99
         const val HEARTBEAT = 0xAA
         const val SOFTWARE_VERSION = 0xCC
+
+        const val SELECT_BT_DEVICE = AUTO_CONNECT_BY_BLUETOOTH_ADDRESS
     }
 
     object Command {
+        const val DISABLE_BLUETOOTH = 4
         const val REQUEST_HOST_UI = 3
+        const val HIDE = 14
         const val SIRI = 5
-        const val MIC = 7
-        const val FRAME_REQUEST = 12
-        const val BOX_MIC = 15
+        const val USE_CAR_MIC = 7
+        const val USE_BOX_MIC = 8
+        const val REQUEST_KEY_FRAME = 12
+        const val USE_BOX_I2S_MIC = 15
         const val NIGHT_MODE_ON = 16
         const val NIGHT_MODE_OFF = 17
-        const val AUDIO_TRANSFER_ON = 22
-        const val AUDIO_TRANSFER_OFF = 23
-        const val WIFI_24 = 24
-        const val WIFI_5 = 25
+        const val START_GNSS_REPORT = 18
+        const val STOP_GNSS_REPORT = 19
+        const val USE_PHONE_MIC = 21
+        const val USE_BLUETOOTH_AUDIO = 22
+        const val USE_BOX_TRANS_AUDIO = 23
+        const val USE_24G_WIFI = 24
+        const val USE_5G_WIFI = 25
+        const val REFRESH_FRAME = 26
+        const val START_BLE_ADV = 30
+        const val STOP_BLE_ADV = 31
         const val HOME = 200
         const val REQUEST_VIDEO_FOCUS = 500
         const val RELEASE_VIDEO_FOCUS = 501
-        const val WIFI_ENABLE = 1000
-        const val AUTO_CONNECT_ENABLE = 1001
-        const val WIFI_CONNECT = 1002
+        const val SUPPORT_WIFI = 1000
+        const val SUPPORT_AUTO_CONNECT = 1001
+        const val START_AUTO_CONNECT = 1002
         const val SCANNING_DEVICE = 1003
         const val DEVICE_FOUND = 1004
         const val DEVICE_NOT_FOUND = 1005
@@ -81,6 +92,19 @@ object Cpc200Protocol {
         const val WIFI_DISCONNECTED = 1010
         const val BT_PAIR_START = 1011
         const val WIFI_PAIR = 1012
+        const val GET_BLUETOOTH_ONLINE_LIST = 1013
+
+        // Compatibility aliases kept to limit churn in higher layers.
+        const val MIC = USE_CAR_MIC
+        const val FRAME_REQUEST = REQUEST_KEY_FRAME
+        const val BOX_MIC = USE_BOX_MIC
+        const val AUDIO_TRANSFER_ON = USE_BLUETOOTH_AUDIO
+        const val AUDIO_TRANSFER_OFF = USE_BOX_TRANS_AUDIO
+        const val WIFI_24 = USE_24G_WIFI
+        const val WIFI_5 = USE_5G_WIFI
+        const val WIFI_ENABLE = SUPPORT_WIFI
+        const val AUTO_CONNECT_ENABLE = SUPPORT_AUTO_CONNECT
+        const val WIFI_CONNECT = START_AUTO_CONNECT
     }
 
     object PhoneType {
@@ -158,6 +182,11 @@ object Cpc200Protocol {
         val payloadText: String,
     )
 
+    data class CommandEnvelope(
+        val commandId: Int,
+        val extraPayload: ByteArray,
+    )
+
     fun alignTo16(value: Int): Int = (value + 15) and 0xFFFFFFF0.toInt()
 
     fun buildHeader(
@@ -187,7 +216,7 @@ object Cpc200Protocol {
     )
 
     fun selectDevice(macAddress: String): ByteArray = wrapMessage(
-        MessageType.SELECT_BT_DEVICE,
+        MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS,
         normalizeDeviceIdentifier(macAddress).toByteArray(Charsets.US_ASCII),
     )
 
@@ -312,6 +341,29 @@ object Cpc200Protocol {
     fun parseCommand(payload: ByteArray): Int =
         ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN).int
 
+    fun parseCommandEnvelope(payload: ByteArray): CommandEnvelope {
+        require(payload.size >= 4) { "Command payload must be at least 4 bytes." }
+        val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        val commandId = buffer.int
+        val extraPayload = ByteArray(buffer.remaining())
+        buffer.get(extraPayload)
+        return CommandEnvelope(commandId = commandId, extraPayload = extraPayload)
+    }
+
+    fun parsePhoneBluetoothMac(payload: ByteArray): String? {
+        if (payload.size <= 4) return null
+        val ascii = payload
+            .copyOfRange(4, payload.size)
+            .toString(Charsets.US_ASCII)
+            .trim('\u0000')
+            .trim()
+        return if (MAC_ADDRESS_PATTERN.matches(ascii)) {
+            ascii.uppercase(Locale.US)
+        } else {
+            null
+        }
+    }
+
     fun parseDeviceIdentifier(payload: ByteArray): String =
         normalizeDeviceIdentifier(payload.toString(Charsets.UTF_8))
 
@@ -388,7 +440,7 @@ object Cpc200Protocol {
         MessageType.COMMAND -> "Command"
         MessageType.LOGO_TYPE -> "LogoType"
         MessageType.BT_ADDRESS -> "BluetoothAddress"
-        MessageType.SELECT_BT_DEVICE -> "SelectBtDevice"
+        MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS -> "AutoConnectByBluetoothAddress"
         MessageType.BT_PIN -> "BluetoothPin"
         MessageType.BT_DEVICE_NAME -> "BluetoothDeviceName"
         MessageType.WIFI_DEVICE_NAME -> "WifiDeviceName"
@@ -399,10 +451,10 @@ object Cpc200Protocol {
         MessageType.MULTI_TOUCH -> "MultiTouch"
         MessageType.HICAR -> "HiCar"
         MessageType.BOX_SETTINGS -> "BoxSettings"
-        MessageType.SELECTED_DEVICE -> "SelectedDevice"
-        MessageType.ACTIVE_DEVICE -> "ActiveDevice"
-        MessageType.UNKNOWN_37 -> "Unknown37"
-        MessageType.UNKNOWN_38 -> "Unknown38"
+        MessageType.BLUETOOTH_CONNECT_START -> "BluetoothConnectStart/SelectedDevice"
+        MessageType.BLUETOOTH_CONNECTED -> "BluetoothConnected/ActiveDevice"
+        MessageType.BLUETOOTH_DISCONNECT -> "BluetoothDisconnect"
+        MessageType.BLUETOOTH_LISTEN -> "BluetoothListen"
         MessageType.MEDIA_DATA -> "MediaData"
         MessageType.NAVI_VIDEO -> "NaviVideo"
         MessageType.SEND_FILE -> "SendFile"
@@ -412,23 +464,32 @@ object Cpc200Protocol {
     }
 
     fun describeCommand(commandId: Int): String = when (commandId) {
+        Command.DISABLE_BLUETOOTH -> "disableBluetoothOrPhoneBtMacNotify"
         Command.REQUEST_HOST_UI -> "requestHostUi"
+        Command.HIDE -> "hide"
         Command.SIRI -> "siri"
-        Command.MIC -> "mic"
-        Command.FRAME_REQUEST -> "frameRequest"
-        Command.BOX_MIC -> "boxMic"
+        Command.USE_CAR_MIC -> "useCarMic"
+        Command.USE_BOX_MIC -> "useBoxMic"
+        Command.REQUEST_KEY_FRAME -> "requestKeyFrame"
+        Command.USE_BOX_I2S_MIC -> "useBoxI2SMic"
         Command.NIGHT_MODE_ON -> "nightModeOn"
         Command.NIGHT_MODE_OFF -> "nightModeOff"
-        Command.AUDIO_TRANSFER_ON -> "audioTransferOn"
-        Command.AUDIO_TRANSFER_OFF -> "audioTransferOff"
-        Command.WIFI_24 -> "wifi24g"
-        Command.WIFI_5 -> "wifi5g"
+        Command.START_GNSS_REPORT -> "startGnssReport"
+        Command.STOP_GNSS_REPORT -> "stopGnssReport"
+        Command.USE_PHONE_MIC -> "usePhoneMic"
+        Command.USE_BLUETOOTH_AUDIO -> "useBluetoothAudio"
+        Command.USE_BOX_TRANS_AUDIO -> "useBoxTransAudio"
+        Command.USE_24G_WIFI -> "use24gWifi"
+        Command.USE_5G_WIFI -> "use5gWifi"
+        Command.REFRESH_FRAME -> "refreshFrame"
+        Command.START_BLE_ADV -> "startBleAdv"
+        Command.STOP_BLE_ADV -> "stopBleAdv"
         Command.HOME -> "home"
         Command.REQUEST_VIDEO_FOCUS -> "requestVideoFocus"
         Command.RELEASE_VIDEO_FOCUS -> "releaseVideoFocus"
-        Command.WIFI_ENABLE -> "wifiEnable"
-        Command.AUTO_CONNECT_ENABLE -> "autoConnectEnable"
-        Command.WIFI_CONNECT -> "wifiConnect"
+        Command.SUPPORT_WIFI -> "supportWifi"
+        Command.SUPPORT_AUTO_CONNECT -> "supportAutoConnect"
+        Command.START_AUTO_CONNECT -> "startAutoConnect"
         Command.SCANNING_DEVICE -> "scanningDevice"
         Command.DEVICE_FOUND -> "deviceFound"
         Command.DEVICE_NOT_FOUND -> "deviceNotFound"
@@ -439,6 +500,7 @@ object Cpc200Protocol {
         Command.WIFI_DISCONNECTED -> "wifiDisconnected"
         Command.BT_PAIR_START -> "btPairStart"
         Command.WIFI_PAIR -> "wifiPair"
+        Command.GET_BLUETOOTH_ONLINE_LIST -> "getBluetoothOnlineList"
         else -> "Command($commandId)"
     }
 

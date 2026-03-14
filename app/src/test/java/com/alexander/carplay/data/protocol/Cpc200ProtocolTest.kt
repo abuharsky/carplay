@@ -76,6 +76,21 @@ class Cpc200ProtocolTest {
     }
 
     @Test
+    fun `official command ids match firmware reference`() {
+        assertThat(Cpc200Protocol.Command.USE_CAR_MIC).isEqualTo(7)
+        assertThat(Cpc200Protocol.Command.USE_BOX_MIC).isEqualTo(8)
+        assertThat(Cpc200Protocol.Command.REQUEST_KEY_FRAME).isEqualTo(12)
+        assertThat(Cpc200Protocol.Command.USE_PHONE_MIC).isEqualTo(21)
+        assertThat(Cpc200Protocol.Command.USE_BLUETOOTH_AUDIO).isEqualTo(22)
+        assertThat(Cpc200Protocol.Command.USE_BOX_TRANS_AUDIO).isEqualTo(23)
+        assertThat(Cpc200Protocol.Command.USE_24G_WIFI).isEqualTo(24)
+        assertThat(Cpc200Protocol.Command.USE_5G_WIFI).isEqualTo(25)
+        assertThat(Cpc200Protocol.Command.START_BLE_ADV).isEqualTo(30)
+        assertThat(Cpc200Protocol.Command.STOP_BLE_ADV).isEqualTo(31)
+        assertThat(Cpc200Protocol.Command.START_AUTO_CONNECT).isEqualTo(1002)
+    }
+
+    @Test
     fun `multiTouch writes touch contacts sequentially`() {
         val message = Cpc200Protocol.multiTouch(
             listOf(

@@ -50,9 +50,9 @@ data class ProjectionSessionConfig(
     val chargeModeEnabled: Boolean = true,
     val boxName: String = "Carlink",
     val mediaDelay: Int = 300,
-    val audioTransferOn: Boolean = true,
+    val useBluetoothAudio: Boolean = false,
     val wifi5g: Boolean = true,
-    val useBoxMic: Boolean = true,
+    val useAdapterMic: Boolean = true,
     val screenPhysicalWidthMm: Int = 250,
     val screenPhysicalHeightMm: Int = 100,
     val oemBranding: OemBrandingConfig = OemBrandingConfig(),
@@ -74,8 +74,8 @@ data class ProjectionSessionConfig(
                 fps = DEFAULT_STREAM_FPS,
                 dpi = DEFAULT_DPI,
                 boxName = boxName,
-                audioTransferOn = true,
-                useBoxMic = true,
+                useBluetoothAudio = false,
+                useAdapterMic = true,
                 oemBranding = buildDefaultOemBranding(context, boxName),
             )
         }

@@ -2,6 +2,7 @@ package com.alexander.carplay.domain.model
 
 data class ProjectionSessionSnapshot(
     val state: ProjectionConnectionState = ProjectionConnectionState.IDLE,
+    val protocolPhase: ProjectionProtocolPhase = ProjectionProtocolPhase.NONE,
     val statusMessage: String = "Service is idle",
     val adapterDescription: String? = null,
     val phoneDescription: String? = null,
