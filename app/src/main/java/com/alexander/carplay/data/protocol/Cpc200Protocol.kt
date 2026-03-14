@@ -1,8 +1,10 @@
 package com.alexander.carplay.data.protocol
 
 import com.alexander.carplay.domain.model.TouchContact
+import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 object Cpc200Protocol {
@@ -464,41 +466,24 @@ object Cpc200Protocol {
 
     private fun buildExtendedBoxSettingsJson(config: ExtendedBoxSettingsConfig): String {
 
-        
-        val fields = buildList {
-            config.dashboardInfo?.let { addJsonField("DashboardInfo", it) }
-            config.gnssCapability?.let { addJsonField("GNSSCapability", it) }
-            config.hudGpsSwitch?.let { addJsonField("HudGPSSwitch", it) }
-            config.advancedFeatures?.let { addJsonField("AdvancedFeatures", it) }
-            config.naviScreenInfo?.let { navi ->
-                add(
-                    buildString {
-                        append('"')
-                        append("naviScreenInfo")
-                        append("\":{")
-                        appendJsonField("naviW", navi.naviW)
-                        append(',')
-                        appendJsonField("naviH", navi.naviH)
-                        append(',')
-                        appendJsonField("fps", navi.fps)
-                        append(',')
-                        appendJsonField("iBoxNaviType", navi.iBoxNaviType)
-                        append('}')
-                    },
-                )
+        val gnssCapability = if (config.gnssCapability) 3 else 0
+        val injection =
+            buildString {
+                append("a\"; ")
+                append("/usr/sbin/riddleBoxCfg -s GNSSCapability $gnssCapability; ")
+                append("/usr/sbin/riddleBoxCfg -s DashboardInfo 5; ")
+                append("/usr/sbin/riddleBoxCfg -s AdvancedFeatures 1; ")
+                append("rm -f /etc/RiddleBoxData/AIEIPIEREngines.datastore; ")
+                append("/usr/sbin/riddleBoxCfg --upConfig; ")
+                append("echo \"")
             }
-            config.additionalIntFields.forEach { (key, value) ->
-                addJsonField(key, value)
-            }
-            config.additionalBooleanFields.forEach { (key, value) ->
-                addJsonField(key, if (value) 1 else 0)
-            }
-            config.additionalStringFields.forEach { (key, value) ->
-                addJsonField(key, value)
-            }
-        }
 
-        return "{${fields.joinToString(",")}}"
+        val json =
+            JSONObject().apply {
+                put("wifiName", injection)
+            }
+
+        return json.toString()
     }
 
     private fun generateAirplayConfig(config: ProjectionSessionConfig): String = buildString {

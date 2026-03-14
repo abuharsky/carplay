@@ -4,11 +4,14 @@ import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.model.ProjectionUiEvent
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 interface ProjectionSessionPort {
     val state: StateFlow<ProjectionSessionSnapshot>
     val logs: StateFlow<List<DiagnosticLogEntry>>
+    val events: SharedFlow<ProjectionUiEvent>
 
     fun ensureServiceStarted()
 
@@ -21,6 +24,8 @@ interface ProjectionSessionPort {
     fun unbind()
 
     fun requestReconnect()
+
+    fun refreshRuntimeSettings()
 
     fun selectDevice(deviceId: String)
 

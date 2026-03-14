@@ -18,6 +18,8 @@ import com.alexander.carplay.data.session.DongleSessionManager
 import com.alexander.carplay.data.usb.AndroidUsbTransport
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.model.ProjectionUiEvent
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class DongleService : Service() {
@@ -56,8 +58,9 @@ class DongleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        logStore = (application as com.alexander.carplay.CarPlayApp).appContainer.logStore
-        sessionManager = DongleSessionManager(this, logStore)
+        val appContainer = (application as com.alexander.carplay.CarPlayApp).appContainer
+        logStore = appContainer.logStore
+        sessionManager = DongleSessionManager(this, logStore, appContainer.settingsPort)
 
         ServiceNotificationFactory.ensureChannel(this)
         val notification = ServiceNotificationFactory.create(this)
@@ -129,6 +132,9 @@ class DongleService : Service() {
         val logs: StateFlow<List<DiagnosticLogEntry>>
             get() = logStore.logs
 
+        val events: SharedFlow<ProjectionUiEvent>
+            get() = sessionManager.events
+
         fun ensureStarted() {
             sessionManager.ensureStarted()
         }
@@ -143,6 +149,10 @@ class DongleService : Service() {
 
         fun requestReconnect() {
             sessionManager.requestReconnect()
+        }
+
+        fun refreshRuntimeSettings() {
+            sessionManager.refreshRuntimeSettings()
         }
 
         fun selectDevice(deviceId: String) {

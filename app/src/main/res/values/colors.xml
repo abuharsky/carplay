@@ -19,4 +19,10 @@
     <color name="device_chip_pending_stroke">#66B9D9FF</color>
     <color name="device_chip_active_bg">#E2173B28</color>
     <color name="device_chip_active_stroke">#6646D189</color>
+    <color name="overlay_action_primary_bg">#F4F7FC</color>
+    <color name="overlay_action_primary_stroke">#33FFFFFF</color>
+    <color name="overlay_action_primary_icon">#09111E</color>
+    <color name="overlay_action_stop_bg">#FBEAEC</color>
+    <color name="overlay_action_stop_stroke">#36FFFFFF</color>
+    <color name="overlay_action_stop_icon">#B42338</color>
 </resources>

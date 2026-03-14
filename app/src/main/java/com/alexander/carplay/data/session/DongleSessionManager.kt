@@ -14,13 +14,17 @@ import com.alexander.carplay.data.protocol.DongleDeviceCatalogParser
 import com.alexander.carplay.data.protocol.DongleKnownDevice
 import com.alexander.carplay.data.protocol.ProjectionSessionConfig
 import com.alexander.carplay.data.replay.CaptureReplaySession
+import com.alexander.carplay.domain.model.ProjectionAudioRoute
 import com.alexander.carplay.data.usb.AndroidUsbTransport
 import com.alexander.carplay.data.usb.DongleConnectionSession
 import com.alexander.carplay.data.usb.UsbTransport
 import com.alexander.carplay.data.video.H264Renderer
 import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
+import com.alexander.carplay.domain.model.ProjectionMicRoute
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.model.ProjectionUiEvent
+import com.alexander.carplay.domain.port.ProjectionSettingsPort
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,12 +32,16 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 class DongleSessionManager(
     context: Context,
     private val logStore: DiagnosticLogStore,
+    private val settingsStore: ProjectionSettingsPort,
 ) {
     private enum class SessionMode {
         USB,
@@ -68,6 +76,7 @@ class DongleSessionManager(
     private val outboundQueue = LinkedBlockingQueue<ByteArray>()
     private val knownDevices = linkedMapOf<String, DongleKnownDevice>()
     private val _state = MutableStateFlow(ProjectionSessionSnapshot())
+    private val _events = MutableSharedFlow<ProjectionUiEvent>(extraBufferCapacity = 8)
     private val flowController = DongleFlowController(
         logStore = logStore,
         delegate = object : DongleFlowController.Delegate {
@@ -107,6 +116,10 @@ class DongleSessionManager(
                 closeCurrentSession(reason, scheduleReconnect = true)
             }
 
+            override fun requestHostUi() {
+                _events.tryEmit(ProjectionUiEvent.OpenSettings)
+            }
+
             override fun updateState(
                 state: ProjectionConnectionState,
                 message: String,
@@ -144,6 +157,7 @@ class DongleSessionManager(
     private var writeLoopStarted = false
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
+    val events: SharedFlow<ProjectionUiEvent> = _events.asSharedFlow()
 
     fun start() {
         startUsb()
@@ -253,6 +267,13 @@ class DongleSessionManager(
         }
     }
 
+    fun refreshRuntimeSettings() {
+        executors.session.execute {
+            applyRuntimeDeviceSettings()
+            refreshState()
+        }
+    }
+
     fun selectDevice(deviceId: String) {
         executors.session.execute {
             val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(deviceId).ifBlank { return@execute }
@@ -342,7 +363,7 @@ class DongleSessionManager(
     private fun startUsbInternal(reason: String) {
         started = true
         sessionMode = SessionMode.USB
-        sessionConfig = ProjectionSessionConfig.fromContext(appContext)
+        sessionConfig = buildSessionConfig()
         updateState(
             state = ProjectionConnectionState.SEARCHING,
             message = "Scanning for USB adapter",
@@ -354,7 +375,7 @@ class DongleSessionManager(
     private fun startReplayInternal(capturePath: String) {
         started = true
         sessionMode = SessionMode.REPLAY
-        sessionConfig = ProjectionSessionConfig.fromContext(appContext)
+        sessionConfig = buildSessionConfig()
         updateState(
             state = ProjectionConnectionState.CONNECTING,
             message = "Opening replay capture ${File(capturePath).name}",
@@ -413,7 +434,7 @@ class DongleSessionManager(
             val session = usbTransport.open(device)
             currentSession = session
             currentConnectionLabel = session.description
-            sessionConfig = ProjectionSessionConfig.fromContext(appContext)
+            sessionConfig = buildSessionConfig()
             resetProjectionRuntime("fresh usb session")
 
             ensureWriteLoop()
@@ -481,6 +502,7 @@ class DongleSessionManager(
         knownDevices.clear()
         outboundQueue.clear()
         audioStreamManager.release()
+        audioStreamManager.updateDeviceSettings(null)
         renderer.softReset()
         logStore.info(SOURCE, "Projection runtime reset: $reason")
     }
@@ -502,6 +524,37 @@ class DongleSessionManager(
 
     private fun rememberKnownDevices(devices: List<DongleKnownDevice>) {
         devices.forEach(::rememberKnownDevice)
+    }
+
+    private fun buildSessionConfig(): ProjectionSessionConfig {
+        val baseConfig = ProjectionSessionConfig.fromContext(appContext)
+        val preferredDeviceId = pendingConnectionDeviceId
+            ?: currentActiveDeviceId
+            ?: currentSelectedDeviceId
+            ?: settingsStore.getLastConnectedDeviceId()
+        val deviceSettings = settingsStore.getSettings(preferredDeviceId)
+
+        return baseConfig.copy(
+            audioTransferOn = deviceSettings.audioRoute != ProjectionAudioRoute.ADAPTER,
+            useBoxMic = deviceSettings.micRoute == ProjectionMicRoute.ADAPTER,
+        )
+    }
+
+    private fun applyRuntimeDeviceSettings() {
+        val settings = settingsStore.getSettings(resolveCurrentDeviceId())
+        audioStreamManager.updateDeviceSettings(settings)
+    }
+
+    private fun resolveCurrentDeviceId(): String? {
+        return currentActiveDeviceId ?: currentSelectedDeviceId ?: pendingConnectionDeviceId
+    }
+
+    private fun resolveCurrentDeviceName(deviceId: String?): String? {
+        val normalizedId = deviceId
+            ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
+            ?.ifBlank { null }
+            ?: return null
+        return knownDevices[normalizedId]?.name
     }
 
     private fun buildDeviceSnapshots(): List<ProjectionDeviceSnapshot> {
@@ -607,6 +660,8 @@ class DongleSessionManager(
         if (snapshot.activeDeviceId != null) {
             val activeId = snapshot.activeDeviceId
             currentActiveDeviceId = activeId
+            currentActiveDeviceId?.let(settingsStore::setLastConnectedDeviceId)
+            applyRuntimeDeviceSettings()
             updateState(
                 state = _state.value.state,
                 message = _state.value.statusMessage,
@@ -871,13 +926,16 @@ class DongleSessionManager(
                 val safePayload = payload ?: return
                 currentSelectedDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
                 logStore.info(SOURCE, "Selected device: ${describeKnownDevice(currentSelectedDeviceId)}")
+                applyRuntimeDeviceSettings()
                 refreshState(phoneDescription = describeKnownDevice(currentSelectedDeviceId))
             }
 
             Cpc200Protocol.MessageType.ACTIVE_DEVICE -> {
                 val safePayload = payload ?: return
                 currentActiveDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
+                currentActiveDeviceId?.let(settingsStore::setLastConnectedDeviceId)
                 logStore.info(SOURCE, "Active device: ${describeKnownDevice(currentActiveDeviceId)}")
+                applyRuntimeDeviceSettings()
                 refreshState(phoneDescription = describeKnownDevice(currentActiveDeviceId))
             }
 
@@ -917,6 +975,7 @@ class DongleSessionManager(
                 rememberKnownDevices(devices)
                 logPairedDevices(devices)
                 sendPendingDeviceSelectionIfNeeded()
+                applyRuntimeDeviceSettings()
                 refreshState()
             }
 
@@ -1075,8 +1134,20 @@ class DongleSessionManager(
             statusMessage = message,
             adapterDescription = adapterDescription,
             phoneDescription = phoneDescription,
+            currentDeviceId = resolveCurrentDeviceId(),
+            currentDeviceName = resolveCurrentDeviceName(resolveCurrentDeviceId()),
             streamDescription = streamDescription,
             devices = devices,
+            appliedAudioRoute = if (sessionConfig.audioTransferOn) {
+                ProjectionAudioRoute.CAR_BLUETOOTH
+            } else {
+                ProjectionAudioRoute.ADAPTER
+            },
+            appliedMicRoute = if (sessionConfig.useBoxMic) {
+                ProjectionMicRoute.ADAPTER
+            } else {
+                ProjectionMicRoute.PHONE
+            },
             videoWidth = videoWidth,
             videoHeight = videoHeight,
             surfaceAttached = surfaceAttached,

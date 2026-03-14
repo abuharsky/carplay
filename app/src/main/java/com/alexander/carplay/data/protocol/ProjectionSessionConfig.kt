@@ -21,56 +21,16 @@ data class NaviScreenInfo(
 )
 
 data class ExtendedBoxSettingsConfig(
-    val enabled: Boolean = false,
-    val dashboardInfo: Int? = null,
-    val gnssCapability: Int? = null,
-    val hudGpsSwitch: Int? = null,
-    val advancedFeatures: Int? = null,
-    val naviScreenInfo: NaviScreenInfo? = null,
-    val additionalIntFields: Map<String, Int> = emptyMap(),
-    val additionalBooleanFields: Map<String, Boolean> = emptyMap(),
-    val additionalStringFields: Map<String, String> = emptyMap(),
+    val enabled: Boolean = true,
+    val gnssCapability: Boolean = true,
 ) {
-    fun isActive(): Boolean = enabled && hasFields()
-
-    fun hasFields(): Boolean =
-        dashboardInfo != null ||
-            gnssCapability != null ||
-            hudGpsSwitch != null ||
-            advancedFeatures != null ||
-            naviScreenInfo != null ||
-            additionalIntFields.isNotEmpty() ||
-            additionalBooleanFields.isNotEmpty() ||
-            additionalStringFields.isNotEmpty()
-
-    fun describe(): String = buildList {
-        dashboardInfo?.let { add("DashboardInfo=$it") }
-        gnssCapability?.let { add("GNSSCapability=$it") }
-        hudGpsSwitch?.let { add("HudGPSSwitch=$it") }
-        advancedFeatures?.let { add("AdvancedFeatures=$it") }
-        naviScreenInfo?.let { add("naviScreenInfo=${it.naviW}x${it.naviH}@${it.fps}") }
-        if (additionalIntFields.isNotEmpty()) add("extraInts=${additionalIntFields.keys.joinToString()}")
-        if (additionalBooleanFields.isNotEmpty()) add("extraBools=${additionalBooleanFields.keys.joinToString()}")
-        if (additionalStringFields.isNotEmpty()) add("extraStrings=${additionalStringFields.keys.joinToString()}")
-    }.joinToString(", ")
+    fun isActive(): Boolean = enabled
 
     companion object {
         fun template(
-            width: Int,
-            height: Int,
-            fps: Int,
         ): ExtendedBoxSettingsConfig = ExtendedBoxSettingsConfig(
             enabled = false,
-            dashboardInfo = 7,
-            gnssCapability = 3,
-            hudGpsSwitch = 1,
-            advancedFeatures = 1,
-            naviScreenInfo = NaviScreenInfo(
-                naviW = width,
-                naviH = height,
-                fps = fps,
-                iBoxNaviType = 0,
-            ),
+            gnssCapability = true,
         )
     }
 }

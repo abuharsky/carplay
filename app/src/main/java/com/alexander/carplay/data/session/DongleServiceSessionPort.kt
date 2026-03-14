@@ -4,7 +4,9 @@ import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSessionPort
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class DongleServiceSessionPort(
@@ -12,6 +14,7 @@ class DongleServiceSessionPort(
 ) : ProjectionSessionPort {
     override val state: StateFlow<ProjectionSessionSnapshot> = connector.state
     override val logs: StateFlow<List<DiagnosticLogEntry>> = connector.logs
+    override val events: SharedFlow<ProjectionUiEvent> = connector.events
 
     override fun ensureServiceStarted() = connector.ensureServiceStarted()
 
@@ -24,6 +27,8 @@ class DongleServiceSessionPort(
     override fun unbind() = connector.unbind()
 
     override fun requestReconnect() = connector.requestReconnect()
+
+    override fun refreshRuntimeSettings() = connector.refreshRuntimeSettings()
 
     override fun selectDevice(deviceId: String) = connector.selectDevice(deviceId)
 

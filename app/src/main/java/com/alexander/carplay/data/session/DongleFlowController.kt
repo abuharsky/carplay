@@ -34,6 +34,8 @@ class DongleFlowController(
 
         fun requestReconnect(reason: String)
 
+        fun requestHostUi()
+
         fun updateState(
             state: ProjectionConnectionState,
             message: String,
@@ -111,7 +113,11 @@ class DongleFlowController(
 
     fun onUnplugged() = Unit
 
-    fun onCommand(@Suppress("UNUSED_PARAMETER") commandId: Int) = Unit
+    fun onCommand(commandId: Int) {
+        if (commandId != Cpc200Protocol.Command.REQUEST_HOST_UI) return
+        logStore.info(SOURCE, "Adapter requested host UI")
+        delegate.requestHostUi()
+    }
 
     private fun buildInitMessages(config: ProjectionSessionConfig): List<ByteArray> = buildList {
         add(Cpc200Protocol.sendNumber("/tmp/screen_dpi", config.dpi))

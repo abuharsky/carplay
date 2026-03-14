@@ -4,9 +4,16 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.audiofx.BassBoost
+import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import com.alexander.carplay.data.logging.DiagnosticLogStore
 import com.alexander.carplay.data.protocol.Cpc200Protocol
 import com.alexander.carplay.data.protocol.Cpc200Protocol.AudioPacket
+import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
+import com.alexander.carplay.domain.model.ProjectionPlayerAudioSettings
+import kotlin.math.roundToInt
 
 class AudioStreamManager(
     private val logStore: DiagnosticLogStore,
@@ -32,10 +39,25 @@ class AudioStreamManager(
     private data class ManagedTrack(
         val track: AudioTrack,
         val format: StreamFormat,
+        val equalizer: Equalizer?,
+        val bassBoost: BassBoost?,
+        val loudnessEnhancer: LoudnessEnhancer?,
     )
 
     private val tracks = mutableMapOf<StreamKey, ManagedTrack>()
     private var activeStream: StreamKey = StreamKey.MEDIA
+    private var currentDeviceSettings: ProjectionDeviceSettings? = null
+
+    fun updateDeviceSettings(settings: ProjectionDeviceSettings?) {
+        currentDeviceSettings = settings
+        logStore.info(
+            SOURCE,
+            "Device audio settings applied: route=${settings?.audioRoute ?: "default"}, mic=${settings?.micRoute ?: "default"}",
+        )
+        tracks.forEach { (streamKey, managedTrack) ->
+            applyEffects(managedTrack, settingsFor(streamKey))
+        }
+    }
 
     fun handleAudioPacket(packet: AudioPacket) {
         packet.command?.let { command ->
@@ -51,22 +73,30 @@ class AudioStreamManager(
             return
         }
 
-        stream.track.write(packet.payload, 0, packet.payload.size)
+        val playerSettings = settingsFor(activeStream)
+        applyEffects(stream, playerSettings)
+        val payload = applyGainIfNeeded(packet.payload, playerSettings.gainMultiplier)
+        stream.track.write(payload, 0, payload.size)
     }
 
     fun release() {
         tracks.values.forEach { managed ->
             managed.track.pause()
             managed.track.flush()
+            managed.equalizer?.release()
+            managed.bassBoost?.release()
+            managed.loudnessEnhancer?.release()
             managed.track.release()
         }
         tracks.clear()
+        currentDeviceSettings = null
     }
 
     private fun handleCommand(
         command: Int,
         decodeType: Int,
     ) {
+        logStore.info(SOURCE, "Audio command ${describeAudioCommand(command)} decodeType=$decodeType")
         when (command) {
             Cpc200Protocol.AudioCommand.OUTPUT_START,
             Cpc200Protocol.AudioCommand.MEDIA_START,
@@ -87,6 +117,23 @@ class AudioStreamManager(
         }
     }
 
+    private fun describeAudioCommand(command: Int): String = when (command) {
+        Cpc200Protocol.AudioCommand.OUTPUT_START -> "outputStart"
+        Cpc200Protocol.AudioCommand.OUTPUT_STOP -> "outputStop"
+        Cpc200Protocol.AudioCommand.INPUT_CONFIG -> "inputConfig"
+        Cpc200Protocol.AudioCommand.PHONE_START -> "phoneStart"
+        Cpc200Protocol.AudioCommand.PHONE_STOP -> "phoneStop"
+        Cpc200Protocol.AudioCommand.NAVI_START -> "naviStart"
+        Cpc200Protocol.AudioCommand.NAVI_STOP -> "naviStop"
+        Cpc200Protocol.AudioCommand.SIRI_START -> "siriStart"
+        Cpc200Protocol.AudioCommand.SIRI_STOP -> "siriStop"
+        Cpc200Protocol.AudioCommand.MEDIA_START -> "mediaStart"
+        Cpc200Protocol.AudioCommand.MEDIA_STOP -> "mediaStop"
+        Cpc200Protocol.AudioCommand.ALERT_START -> "alertStart"
+        Cpc200Protocol.AudioCommand.ALERT_STOP -> "alertStop"
+        else -> "unknown($command)"
+    }
+
     private fun startStream(
         streamKey: StreamKey,
         decodeType: Int,
@@ -101,6 +148,9 @@ class AudioStreamManager(
         tracks.remove(streamKey)?.let { managed ->
             managed.track.pause()
             managed.track.flush()
+            managed.equalizer?.release()
+            managed.bassBoost?.release()
+            managed.loudnessEnhancer?.release()
             managed.track.release()
             logStore.info(SOURCE, "Audio stream stopped: $streamKey")
         }
@@ -141,7 +191,15 @@ class AudioStreamManager(
             AudioTrack.MODE_STREAM,
             AudioManager.AUDIO_SESSION_ID_GENERATE,
         )
-        return ManagedTrack(audioTrack, format).also { tracks[streamKey] = it }
+        val managedTrack = ManagedTrack(
+            track = audioTrack,
+            format = format,
+            equalizer = createEqualizer(audioTrack.audioSessionId),
+            bassBoost = createBassBoost(audioTrack.audioSessionId),
+            loudnessEnhancer = createLoudnessEnhancer(audioTrack.audioSessionId),
+        )
+        applyEffects(managedTrack, settingsFor(streamKey))
+        return managedTrack.also { tracks[streamKey] = it }
     }
 
     private fun decodeTypeToFormat(
@@ -178,5 +236,99 @@ class AudioStreamManager(
 
             else -> null
         }
+    }
+
+    private fun settingsFor(streamKey: StreamKey): ProjectionPlayerAudioSettings {
+        val playerType = when (streamKey) {
+            StreamKey.MEDIA -> ProjectionAudioPlayerType.MEDIA
+            StreamKey.NAVI -> ProjectionAudioPlayerType.NAVI
+            StreamKey.SIRI -> ProjectionAudioPlayerType.SIRI
+            StreamKey.PHONE -> ProjectionAudioPlayerType.PHONE
+            StreamKey.ALERT -> ProjectionAudioPlayerType.ALERT
+        }
+        return currentDeviceSettings?.playerSettings?.get(playerType) ?: ProjectionPlayerAudioSettings()
+    }
+
+    private fun createEqualizer(audioSessionId: Int): Equalizer? {
+        return runCatching {
+            Equalizer(0, audioSessionId).apply { enabled = true }
+        }.getOrNull()
+    }
+
+    private fun createBassBoost(audioSessionId: Int): BassBoost? {
+        return runCatching {
+            BassBoost(0, audioSessionId).apply { enabled = false }
+        }.getOrNull()
+    }
+
+    private fun createLoudnessEnhancer(audioSessionId: Int): LoudnessEnhancer? {
+        return runCatching {
+            LoudnessEnhancer(audioSessionId).apply { enabled = false }
+        }.getOrNull()
+    }
+
+    private fun applyEffects(
+        managedTrack: ManagedTrack,
+        settings: ProjectionPlayerAudioSettings,
+    ) {
+        managedTrack.bassBoost?.let { bassBoost ->
+            runCatching {
+                val strength = (settings.bassBoostPercent * 10).coerceIn(0, 1000)
+                bassBoost.setStrength(strength.toShort())
+                bassBoost.enabled = strength > 0
+            }.onFailure { error ->
+                logStore.error(SOURCE, "Unable to apply bass boost", error)
+            }
+        }
+
+        managedTrack.loudnessEnhancer?.let { loudnessEnhancer ->
+            runCatching {
+                val gainMb = (settings.loudnessBoostPercent / 100f * 2000f).roundToInt()
+                loudnessEnhancer.setTargetGain(gainMb)
+                loudnessEnhancer.enabled = gainMb > 0
+            }.onFailure { error ->
+                logStore.error(SOURCE, "Unable to apply loudness enhancer", error)
+            }
+        }
+
+        managedTrack.equalizer?.let { equalizer ->
+            runCatching {
+                val bandCount = equalizer.numberOfBands.toInt()
+                if (bandCount <= 0) return@runCatching
+                val range = equalizer.bandLevelRange
+                val minLevel = range.getOrNull(0)?.toInt() ?: -1200
+                val maxLevel = range.getOrNull(1)?.toInt() ?: 1200
+
+                repeat(bandCount) { bandIndex ->
+                    val mappedIndex = if (bandCount == 1) 0 else {
+                        ((bandIndex.toFloat() / (bandCount - 1)) * (settings.eqBandsDb.size - 1)).roundToInt()
+                    }
+                    val bandDb = settings.eqBandsDb.getOrElse(mappedIndex) { 0f }
+                    val bandLevel = (bandDb * 100).roundToInt().coerceIn(minLevel, maxLevel)
+                    equalizer.setBandLevel(bandIndex.toShort(), bandLevel.toShort())
+                }
+                equalizer.enabled = settings.eqBandsDb.any { it != 0f }
+            }.onFailure { error ->
+                logStore.error(SOURCE, "Unable to apply equalizer settings", error)
+            }
+        }
+    }
+
+    private fun applyGainIfNeeded(
+        payload: ByteArray,
+        gainMultiplier: Float,
+    ): ByteArray {
+        if (gainMultiplier <= 1.001f) return payload
+
+        val amplified = payload.copyOf()
+        var index = 0
+        while (index + 1 < amplified.size) {
+            val sample = ((amplified[index + 1].toInt() shl 8) or (amplified[index].toInt() and 0xFF)).toShort()
+            val boosted = (sample * gainMultiplier).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            amplified[index] = boosted.toByte()
+            amplified[index + 1] = (boosted shr 8).toByte()
+            index += 2
+        }
+        return amplified
     }
 }

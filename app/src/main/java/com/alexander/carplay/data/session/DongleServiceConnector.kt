@@ -12,14 +12,18 @@ import androidx.core.content.ContextCompat
 import com.alexander.carplay.data.logging.DiagnosticLogStore
 import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.platform.service.DongleService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 
 class DongleServiceConnector(
@@ -39,14 +43,17 @@ class DongleServiceConnector(
             statusMessage = "Service is not bound yet",
         ),
     )
+    private val _events = MutableSharedFlow<ProjectionUiEvent>(extraBufferCapacity = 8)
 
     private var binder: DongleService.ServiceBinder? = null
     private var stateJob: Job? = null
+    private var eventsJob: Job? = null
     private var bound = false
     private var pendingSurface: Surface? = null
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val logs = logStore.logs
+    val events: SharedFlow<ProjectionUiEvent> = _events.asSharedFlow()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(
@@ -56,9 +63,15 @@ class DongleServiceConnector(
             binder = service as? DongleService.ServiceBinder
             binder?.ensureStarted()
             stateJob?.cancel()
+            eventsJob?.cancel()
             stateJob = scope.launch {
                 binder?.state?.collect { snapshot ->
                     _state.value = snapshot
+                }
+            }
+            eventsJob = scope.launch {
+                binder?.events?.collect { event ->
+                    _events.emit(event)
                 }
             }
             pendingSurface?.let { safeSurface ->
@@ -70,6 +83,7 @@ class DongleServiceConnector(
         override fun onServiceDisconnected(name: ComponentName?) {
             binder = null
             stateJob?.cancel()
+            eventsJob?.cancel()
             _state.value = _state.value.copy(
                 state = ProjectionConnectionState.ERROR,
                 statusMessage = "Service disconnected",
@@ -120,11 +134,17 @@ class DongleServiceConnector(
         bound = false
         binder = null
         stateJob?.cancel()
+        eventsJob?.cancel()
     }
 
     fun requestReconnect() {
         ensureServiceStarted()
         binder?.requestReconnect()
+    }
+
+    fun refreshRuntimeSettings() {
+        ensureServiceStarted()
+        binder?.refreshRuntimeSettings()
     }
 
     fun selectDevice(deviceId: String) {

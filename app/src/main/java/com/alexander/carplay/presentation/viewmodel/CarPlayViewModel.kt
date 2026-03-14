@@ -7,15 +7,21 @@ import androidx.lifecycle.viewModelScope
 import com.alexander.carplay.R
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionConnectionState
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
 import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
+import com.alexander.carplay.domain.usecase.LoadProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
+import com.alexander.carplay.domain.usecase.ObserveProjectionUiEventsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
+import com.alexander.carplay.domain.usecase.RefreshProjectionRuntimeSettingsUseCase
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
+import com.alexander.carplay.domain.usecase.SaveProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
 import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
 import com.alexander.carplay.domain.usecase.StartReplaySessionUseCase
@@ -23,6 +29,7 @@ import com.alexander.carplay.domain.usecase.StartProjectionServiceUseCase
 import com.alexander.carplay.domain.usecase.StartUsbSessionUseCase
 import com.alexander.carplay.domain.usecase.UnbindProjectionUiUseCase
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -55,12 +62,16 @@ data class CarPlayDeviceUiState(
 class CarPlayViewModel(
     observeProjectionStateUseCase: ObserveProjectionStateUseCase,
     observeDiagnosticLogsUseCase: ObserveDiagnosticLogsUseCase,
+    observeProjectionUiEventsUseCase: ObserveProjectionUiEventsUseCase,
     private val startProjectionServiceUseCase: StartProjectionServiceUseCase,
     private val startUsbSessionUseCase: StartUsbSessionUseCase,
     private val startReplaySessionUseCase: StartReplaySessionUseCase,
     private val bindProjectionUiUseCase: BindProjectionUiUseCase,
     private val unbindProjectionUiUseCase: UnbindProjectionUiUseCase,
     private val requestProjectionReconnectUseCase: RequestProjectionReconnectUseCase,
+    private val refreshProjectionRuntimeSettingsUseCase: RefreshProjectionRuntimeSettingsUseCase,
+    private val loadProjectionDeviceSettingsUseCase: LoadProjectionDeviceSettingsUseCase,
+    private val saveProjectionDeviceSettingsUseCase: SaveProjectionDeviceSettingsUseCase,
     private val selectProjectionDeviceUseCase: SelectProjectionDeviceUseCase,
     private val cancelProjectionDeviceConnectionUseCase: CancelProjectionDeviceConnectionUseCase,
     private val attachProjectionSurfaceUseCase: AttachProjectionSurfaceUseCase,
@@ -73,9 +84,13 @@ class CarPlayViewModel(
     }
 
     private val timeFormatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    private val projectionState = observeProjectionStateUseCase()
+
+    val sessionSnapshot: StateFlow<ProjectionSessionSnapshot> = projectionState
+    val uiEvents: SharedFlow<ProjectionUiEvent> = observeProjectionUiEventsUseCase()
 
     val uiState: StateFlow<CarPlayUiState> = combine(
-        observeProjectionStateUseCase(),
+        projectionState,
         observeDiagnosticLogsUseCase(),
     ) { snapshot, logs ->
         snapshot.toUiState(logs)
@@ -131,6 +146,22 @@ class CarPlayViewModel(
         surfaceHeight: Int,
     ) {
         sendProjectionMotionUseCase(event, surfaceWidth, surfaceHeight)
+    }
+
+    fun loadDeviceSettings(deviceId: String?): ProjectionDeviceSettings {
+        return loadProjectionDeviceSettingsUseCase(deviceId)
+    }
+
+    fun saveDeviceSettings(
+        settings: ProjectionDeviceSettings,
+        reconnectRequired: Boolean,
+    ) {
+        saveProjectionDeviceSettingsUseCase(settings)
+        if (reconnectRequired) {
+            requestProjectionReconnectUseCase()
+        } else {
+            refreshProjectionRuntimeSettingsUseCase()
+        }
     }
 
     private fun ProjectionSessionSnapshot.toUiState(logs: List<DiagnosticLogEntry>): CarPlayUiState {

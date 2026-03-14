@@ -4,7 +4,9 @@ import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSessionPort
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class ObserveProjectionStateUseCase(
@@ -17,6 +19,12 @@ class ObserveDiagnosticLogsUseCase(
     private val sessionPort: ProjectionSessionPort,
 ) {
     operator fun invoke(): StateFlow<List<DiagnosticLogEntry>> = sessionPort.logs
+}
+
+class ObserveProjectionUiEventsUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(): SharedFlow<ProjectionUiEvent> = sessionPort.events
 }
 
 class StartProjectionServiceUseCase(
@@ -53,6 +61,12 @@ class RequestProjectionReconnectUseCase(
     private val sessionPort: ProjectionSessionPort,
 ) {
     operator fun invoke() = sessionPort.requestReconnect()
+}
+
+class RefreshProjectionRuntimeSettingsUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.refreshRuntimeSettings()
 }
 
 class SelectProjectionDeviceUseCase(

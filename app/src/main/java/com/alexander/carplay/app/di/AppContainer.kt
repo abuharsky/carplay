@@ -2,16 +2,22 @@ package com.alexander.carplay.app.di
 
 import android.app.Application
 import com.alexander.carplay.data.logging.DiagnosticLogStore
+import com.alexander.carplay.data.settings.SharedPreferencesProjectionSettingsStore
 import com.alexander.carplay.data.session.DongleServiceConnector
 import com.alexander.carplay.data.session.DongleServiceSessionPort
 import com.alexander.carplay.domain.port.ProjectionSessionPort
+import com.alexander.carplay.domain.port.ProjectionSettingsPort
 import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
 import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
+import com.alexander.carplay.domain.usecase.ObserveProjectionUiEventsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
+import com.alexander.carplay.domain.usecase.RefreshProjectionRuntimeSettingsUseCase
+import com.alexander.carplay.domain.usecase.LoadProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
+import com.alexander.carplay.domain.usecase.SaveProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
 import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
 import com.alexander.carplay.domain.usecase.StartReplaySessionUseCase
@@ -21,6 +27,7 @@ import com.alexander.carplay.domain.usecase.UnbindProjectionUiUseCase
 
 class AppContainer(application: Application) {
     val logStore = DiagnosticLogStore()
+    val settingsPort: ProjectionSettingsPort = SharedPreferencesProjectionSettingsStore(application)
 
     private val serviceConnector = DongleServiceConnector(application, logStore)
 
@@ -28,12 +35,16 @@ class AppContainer(application: Application) {
 
     val observeProjectionStateUseCase = ObserveProjectionStateUseCase(sessionPort)
     val observeDiagnosticLogsUseCase = ObserveDiagnosticLogsUseCase(sessionPort)
+    val observeProjectionUiEventsUseCase = ObserveProjectionUiEventsUseCase(sessionPort)
+    val loadProjectionDeviceSettingsUseCase = LoadProjectionDeviceSettingsUseCase(settingsPort)
+    val saveProjectionDeviceSettingsUseCase = SaveProjectionDeviceSettingsUseCase(settingsPort)
     val startProjectionServiceUseCase = StartProjectionServiceUseCase(sessionPort)
     val startUsbSessionUseCase = StartUsbSessionUseCase(sessionPort)
     val startReplaySessionUseCase = StartReplaySessionUseCase(sessionPort)
     val bindProjectionUiUseCase = BindProjectionUiUseCase(sessionPort)
     val unbindProjectionUiUseCase = UnbindProjectionUiUseCase(sessionPort)
     val requestProjectionReconnectUseCase = RequestProjectionReconnectUseCase(sessionPort)
+    val refreshProjectionRuntimeSettingsUseCase = RefreshProjectionRuntimeSettingsUseCase(sessionPort)
     val selectProjectionDeviceUseCase = SelectProjectionDeviceUseCase(sessionPort)
     val cancelProjectionDeviceConnectionUseCase = CancelProjectionDeviceConnectionUseCase(sessionPort)
     val attachProjectionSurfaceUseCase = AttachProjectionSurfaceUseCase(sessionPort)
