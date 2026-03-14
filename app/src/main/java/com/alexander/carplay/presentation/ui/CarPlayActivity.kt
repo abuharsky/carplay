@@ -3,7 +3,6 @@ package com.alexander.carplay.presentation.ui
 import android.Manifest
 import android.content.res.ColorStateList
 import android.content.pm.PackageManager
-import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.os.Build
 import android.os.Bundle
@@ -50,6 +49,7 @@ class CarPlayActivity : AppCompatActivity() {
             width: Int,
             height: Int,
         ) {
+            updateSurfaceBufferSize(surface)
             outputSurface = Surface(surface)
             viewModel.onSurfaceAvailable(outputSurface!!)
             applyVideoTransform()
@@ -60,6 +60,7 @@ class CarPlayActivity : AppCompatActivity() {
             width: Int,
             height: Int,
         ) {
+            updateSurfaceBufferSize(surface)
             applyVideoTransform()
         }
 
@@ -154,6 +155,7 @@ class CarPlayActivity : AppCompatActivity() {
         binding.collapsedStatusMessage.text = uiState.statusMessage
         videoWidth = uiState.videoWidth ?: 0
         videoHeight = uiState.videoHeight ?: 0
+        updateSurfaceBufferSize()
         updateDiagnosticsText(uiState.diagnosticsText)
         binding.connectButton.visibility = if (uiState.showConnectButton) {
             android.view.View.VISIBLE
@@ -270,25 +272,11 @@ class CarPlayActivity : AppCompatActivity() {
     }
 
     private fun applyVideoTransform() {
-        val viewWidth = binding.projectionSurface.width
-        val viewHeight = binding.projectionSurface.height
-        if (viewWidth <= 0 || viewHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) {
-            binding.projectionSurface.setTransform(null)
-            return
-        }
+        binding.projectionSurface.setTransform(null)
+    }
 
-        val scale = maxOf(
-            viewWidth.toFloat() / videoWidth.toFloat(),
-            viewHeight.toFloat() / videoHeight.toFloat(),
-        )
-        val scaledWidth = videoWidth.toFloat() * scale
-        val scaledHeight = videoHeight.toFloat() * scale
-        val dx = (viewWidth - scaledWidth) / 2f
-        val dy = (viewHeight - scaledHeight) / 2f
-
-        val matrix = Matrix()
-        matrix.setScale(scale, scale)
-        matrix.postTranslate(dx, dy)
-        binding.projectionSurface.setTransform(matrix)
+    private fun updateSurfaceBufferSize(surfaceTexture: SurfaceTexture? = binding.projectionSurface.surfaceTexture) {
+        if (videoWidth <= 0 || videoHeight <= 0) return
+        surfaceTexture?.setDefaultBufferSize(videoWidth, videoHeight)
     }
 }
