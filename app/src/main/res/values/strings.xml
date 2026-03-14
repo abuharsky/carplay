@@ -62,5 +62,5 @@
     <string name="settings_mic_reconnect_note">Маршрут микрофона требует переподключения. Усиление сохраняется для этого iPhone.</string>
     <string name="settings_save">Сохранить</string>
     <string name="settings_save_reconnect">Сохранить и переподключить</string>
-    <string name="settings_close">Назад</string>
+    <string name="settings_close">Закрыть</string>
 </resources>

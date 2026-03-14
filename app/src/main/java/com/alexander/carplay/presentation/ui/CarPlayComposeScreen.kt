@@ -58,7 +58,6 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -76,7 +75,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -85,7 +83,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -119,8 +116,6 @@ private val AppColorScheme = darkColorScheme(
     onSecondary = Color(0xFF071019),
 )
 
-private const val CARPLAY_UI_SCALE = 0.7f
-
 @Composable
 fun CarPlayComposeTheme(
     content: @Composable () -> Unit,
@@ -129,22 +124,6 @@ fun CarPlayComposeTheme(
         colorScheme = AppColorScheme,
         content = content,
     )
-}
-
-@Composable
-private fun ScaledCarPlayUi(
-    content: @Composable () -> Unit,
-) {
-    val baseDensity = LocalDensity.current
-    val scaledDensity = remember(baseDensity) {
-        Density(
-            density = baseDensity.density * CARPLAY_UI_SCALE,
-            fontScale = baseDensity.fontScale,
-        )
-    }
-    CompositionLocalProvider(LocalDensity provides scaledDensity) {
-        content()
-    }
 }
 
 @Composable
@@ -210,42 +189,38 @@ fun CarPlayRoute(
             exit = fadeOut(animationSpec = tween(420)),
             modifier = Modifier.fillMaxSize(),
         ) {
-            ScaledCarPlayUi {
-                ConnectionOverlay(
-                    uiState = uiState,
-                    devices = devices,
-                    selectedDevice = selectedDevice,
-                    isSelectorExpanded = isSelectorExpanded,
-                    onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
-                    onSelectorDismiss = { isSelectorExpanded = false },
-                    onDeviceSelected = { device ->
-                        selectedDeviceId = device.id
-                        isSelectorExpanded = false
-                    },
-                    onActionClick = {
-                        when {
-                            shouldShowStop -> viewModel.onCancelDeviceConnection()
-                            selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
-                            else -> viewModel.onConnectClicked()
-                        }
-                    },
-                    onReplayClick = { viewModel.onReplayClicked() },
-                    connectActionEnabled = connectActionEnabled,
-                    showStopAction = shouldShowStop,
-                )
-            }
+            ConnectionOverlay(
+                uiState = uiState,
+                devices = devices,
+                selectedDevice = selectedDevice,
+                isSelectorExpanded = isSelectorExpanded,
+                onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
+                onSelectorDismiss = { isSelectorExpanded = false },
+                onDeviceSelected = { device ->
+                    selectedDeviceId = device.id
+                    isSelectorExpanded = false
+                },
+                onActionClick = {
+                    when {
+                        shouldShowStop -> viewModel.onCancelDeviceConnection()
+                        selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
+                        else -> viewModel.onConnectClicked()
+                    }
+                },
+                onReplayClick = { viewModel.onReplayClicked() },
+                connectActionEnabled = connectActionEnabled,
+                showStopAction = shouldShowStop,
+            )
         }
 
         if (showSettings) {
-            ScaledCarPlayUi {
-                ProjectionSettingsScreen(
-                    deviceId = sessionSnapshot.currentDeviceId,
-                    deviceName = sessionSnapshot.currentDeviceName,
-                    diagnosticsText = uiState.diagnosticsText,
-                    viewModel = viewModel,
-                    onDismiss = { showSettings = false },
-                )
-            }
+            ProjectionSettingsScreen(
+                deviceId = sessionSnapshot.currentDeviceId,
+                deviceName = sessionSnapshot.currentDeviceName,
+                diagnosticsText = uiState.diagnosticsText,
+                viewModel = viewModel,
+                onDismiss = { showSettings = false },
+            )
         }
     }
 }
@@ -710,7 +685,7 @@ private fun OverlayActionButton(
                 },
             ),
             contentDescription = null,
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(if (showStopAction) 36.dp else 40.dp),
             tint = iconTint,
         )
     }
@@ -812,93 +787,100 @@ private fun ProjectionSettingsScreen(
 
     BackHandler(onBack = onDismiss)
 
-    Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.44f)),
-        color = Color(0xF20A1019),
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
+        val eqEditorHeight = (maxHeight - 156.dp).coerceAtLeast(360.dp)
+
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.44f)),
+            color = Color(0xF20A1019),
         ) {
-            SettingsHeader(
-                title = stringResource(id = R.string.settings_sheet_title),
-                deviceName = deviceName?.takeIf { it.isNotBlank() }
-                    ?: stringResource(id = R.string.settings_sheet_default_device),
-                saveLabel = stringResource(id = R.string.settings_save),
-                saveEnabled = reconnectRequired,
-                onBack = onDismiss,
-                onSave = {
-                    viewModel.saveDeviceSettings(workingSettings, reconnectRequired)
-                    onDismiss()
-                },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
-            )
-
-            LazyColumn(
+            Column(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
             ) {
-                item {
-                    PlayerAudioSection(
-                        isEnabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
-                        settings = workingSettings,
-                        onToggleEnabled = { enabled ->
-                            workingSettings = workingSettings.copy(
-                                audioRoute = if (enabled) {
-                                    ProjectionAudioRoute.ADAPTER
-                                } else {
-                                    ProjectionAudioRoute.CAR_BLUETOOTH
-                                },
-                            )
-                        },
-                        onSelectPlayer = { player ->
-                            workingSettings = workingSettings.copy(selectedPlayer = player)
-                        },
-                        onRoutePlayerSettingsChanged = { updatedPlayerSettings ->
-                            val updatedWorking = workingSettings.copy(
-                                playerSettings = workingSettings.playerSettings.toMutableMap().apply {
-                                    put(workingSettings.selectedPlayer, updatedPlayerSettings)
-                                },
-                            )
-                            workingSettings = updatedWorking
+                SettingsHeader(
+                    title = stringResource(id = R.string.settings_sheet_title),
+                    deviceName = deviceName?.takeIf { it.isNotBlank() }
+                        ?: stringResource(id = R.string.settings_sheet_default_device),
+                    saveLabel = stringResource(id = R.string.settings_save),
+                    saveEnabled = reconnectRequired,
+                    onBack = onDismiss,
+                    onSave = {
+                        viewModel.saveDeviceSettings(workingSettings, reconnectRequired)
+                        onDismiss()
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                )
 
-                            val realtimePersisted = savedSettings.copy(
-                                selectedPlayer = updatedWorking.selectedPlayer,
-                                playerSettings = updatedWorking.playerSettings,
-                            )
-                            savedSettings = realtimePersisted
-                            viewModel.saveDeviceSettings(realtimePersisted, reconnectRequired = false)
-                        },
-                    )
-                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                ) {
+                    item {
+                        PlayerAudioSection(
+                            isEnabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
+                            settings = workingSettings,
+                            eqEditorHeight = eqEditorHeight,
+                            onToggleEnabled = { enabled ->
+                                workingSettings = workingSettings.copy(
+                                    audioRoute = if (enabled) {
+                                        ProjectionAudioRoute.ADAPTER
+                                    } else {
+                                        ProjectionAudioRoute.CAR_BLUETOOTH
+                                    },
+                                )
+                            },
+                            onSelectPlayer = { player ->
+                                workingSettings = workingSettings.copy(selectedPlayer = player)
+                            },
+                            onRoutePlayerSettingsChanged = { updatedPlayerSettings ->
+                                val updatedWorking = workingSettings.copy(
+                                    playerSettings = workingSettings.playerSettings.toMutableMap().apply {
+                                        put(workingSettings.selectedPlayer, updatedPlayerSettings)
+                                    },
+                                )
+                                workingSettings = updatedWorking
 
-                item {
-                    MicrophoneSection(
-                        isEnabled = workingSettings.micRoute == ProjectionMicRoute.ADAPTER,
-                        onToggleEnabled = { enabled ->
-                            workingSettings = workingSettings.copy(
-                                micRoute = if (enabled) {
-                                    ProjectionMicRoute.ADAPTER
-                                } else {
-                                    ProjectionMicRoute.PHONE
-                                },
-                            )
-                        },
-                        gainMultiplier = workingSettings.micSettings.gainMultiplier,
-                        onGainChanged = {
-                            workingSettings = workingSettings.copy(
-                                micSettings = workingSettings.micSettings.copy(gainMultiplier = it),
-                            )
-                        },
-                    )
-                }
+                                val realtimePersisted = savedSettings.copy(
+                                    selectedPlayer = updatedWorking.selectedPlayer,
+                                    playerSettings = updatedWorking.playerSettings,
+                                )
+                                savedSettings = realtimePersisted
+                                viewModel.saveDeviceSettings(realtimePersisted, reconnectRequired = false)
+                            },
+                        )
+                    }
 
-                item {
-                    DiagnosticsSettingsSection(
-                        diagnosticsText = diagnosticsText,
-                    )
+                    item {
+                        MicrophoneSection(
+                            isEnabled = workingSettings.micRoute == ProjectionMicRoute.ADAPTER,
+                            onToggleEnabled = { enabled ->
+                                workingSettings = workingSettings.copy(
+                                    micRoute = if (enabled) {
+                                        ProjectionMicRoute.ADAPTER
+                                    } else {
+                                        ProjectionMicRoute.PHONE
+                                    },
+                                )
+                            },
+                            gainMultiplier = workingSettings.micSettings.gainMultiplier,
+                            onGainChanged = {
+                                workingSettings = workingSettings.copy(
+                                    micSettings = workingSettings.micSettings.copy(gainMultiplier = it),
+                                )
+                            },
+                        )
+                    }
+
+                    item {
+                        DiagnosticsSettingsSection(
+                            diagnosticsText = diagnosticsText,
+                        )
+                    }
                 }
             }
         }
@@ -958,7 +940,7 @@ private fun HeaderButton(
     emphasized: Boolean = false,
 ) {
     Surface(
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(30.dp),
         color = if (emphasized) {
             Color.White.copy(alpha = if (enabled) 0.92f else 0.22f)
         } else {
@@ -973,10 +955,10 @@ private fun HeaderButton(
             } else {
                 Color.White
             },
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
             modifier = Modifier
                 .clickable(enabled = enabled, onClick = onClick)
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+                .padding(horizontal = 22.dp, vertical = 15.dp),
         )
     }
 }
@@ -1023,6 +1005,7 @@ private fun SettingsSectionCard(
 private fun PlayerAudioSection(
     isEnabled: Boolean,
     settings: ProjectionDeviceSettings,
+    eqEditorHeight: Dp,
     onToggleEnabled: (Boolean) -> Unit,
     onSelectPlayer: (ProjectionAudioPlayerType) -> Unit,
     onRoutePlayerSettingsChanged: (ProjectionPlayerAudioSettings) -> Unit,
@@ -1100,6 +1083,7 @@ private fun PlayerAudioSection(
             Spacer(modifier = Modifier.height(18.dp))
 
             VerticalEqEditor(
+                modifier = Modifier.height(eqEditorHeight),
                 bandsDb = playerSettings.eqBandsDb,
                 onBandChange = { index: Int, value: Float ->
                     val newBands = playerSettings.eqBandsDb.toMutableList().apply {
@@ -1264,6 +1248,7 @@ private fun SliderCard(
 
 @Composable
 private fun VerticalEqEditor(
+    modifier: Modifier = Modifier,
     bandsDb: List<Float>,
     onBandChange: (Int, Float) -> Unit,
 ) {
@@ -1272,14 +1257,14 @@ private fun VerticalEqEditor(
     }
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
         color = Color.White.copy(alpha = 0.04f),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.04f)),
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(horizontal = 12.dp, vertical = 18.dp),
         ) {
             Text(
@@ -1291,7 +1276,7 @@ private fun VerticalEqEditor(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(456.dp),
+                    .weight(1f),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom,
             ) {
@@ -1315,56 +1300,53 @@ private fun VerticalEqBand(
     value: Float,
     onValueChange: (Float) -> Unit,
 ) {
-    BoxWithConstraints(
+    val animatedValue by animateFloatAsState(
+        targetValue = value,
+        animationSpec = tween(140),
+        label = "eqBandValue",
+    )
+
+    Column(
         modifier = Modifier
             .width(width)
             .fillMaxHeight(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        val sliderLength = (maxHeight - 60.dp).coerceAtLeast(340.dp)
-        val animatedValue by animateFloatAsState(
-            targetValue = value,
-            animationSpec = tween(140),
-            label = "eqBandValue",
+        Text(
+            text = formatEq(value),
+            color = Color.White.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
         )
 
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = formatEq(value),
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
-            )
+            val sliderLength = maxHeight.coerceAtLeast(180.dp)
 
-            Box(
+            Slider(
+                value = animatedValue,
+                onValueChange = onValueChange,
+                valueRange = -12f..12f,
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Slider(
-                    value = animatedValue,
-                    onValueChange = onValueChange,
-                    valueRange = -12f..12f,
-                    modifier = Modifier
-                        .requiredSize(width = sliderLength, height = 64.dp)
-                        .graphicsLayer {
-                            rotationZ = -90f
-                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
-                        },
-                )
-            }
-
-            Text(
-                text = label,
-                color = Color.White,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                textAlign = TextAlign.Center,
+                    .requiredSize(width = sliderLength, height = 72.dp)
+                    .graphicsLayer {
+                        rotationZ = -90f
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
+                    },
             )
         }
+
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

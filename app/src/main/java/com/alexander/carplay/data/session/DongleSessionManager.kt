@@ -58,6 +58,7 @@ class DongleSessionManager(
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
         private const val HEARTBEAT_TIMEOUT_MS = 15_000L
+        private const val STREAMING_HEARTBEAT_TIMEOUT_MS = 90_000L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
         private const val AUTO_CONNECT_RESCAN_INTERVAL_MS = 3_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
@@ -520,13 +521,22 @@ class DongleSessionManager(
         if (sessionMode != SessionMode.USB) return
         if (currentSession == null || shuttingDown || !started) return
         if (heartbeatTimeoutTriggered) return
+        if (autoConnectFuture != null || bleAdvertisingActive) {
+            return
+        }
+        val currentPhase = _state.value.protocolPhase
+        val timeoutMs = if (currentPhase == ProjectionProtocolPhase.STREAMING_ACTIVE) {
+            STREAMING_HEARTBEAT_TIMEOUT_MS
+        } else {
+            HEARTBEAT_TIMEOUT_MS
+        }
         val silenceMs = SystemClock.elapsedRealtime() - lastInboundActivityAtMs
-        if (silenceMs < HEARTBEAT_TIMEOUT_MS) return
+        if (silenceMs < timeoutMs) return
 
         heartbeatTimeoutTriggered = true
         logStore.info(
             SOURCE,
-            "Heartbeat timeout after ${silenceMs}ms without inbound adapter activity; reconnecting USB session",
+            "Heartbeat timeout after ${silenceMs}ms in phase=${currentPhase.name} (threshold=${timeoutMs}ms); reconnecting USB session",
         )
         closeCurrentSession("heartbeat timeout", scheduleReconnect = true)
     }
@@ -854,6 +864,7 @@ class DongleSessionManager(
         payloadLength: Int,
     ) {
         val payload = session.readPayload(payloadLength, READ_TIMEOUT_MS)
+        if (currentSession !== session) return
         if (payload.size < Cpc200Protocol.VIDEO_SUB_HEADER_SIZE) {
             logStore.info(SOURCE, "NaviVideo packet too short: ${payload.size} bytes")
             return
@@ -884,7 +895,8 @@ class DongleSessionManager(
 
                     val header = Cpc200Protocol.parseHeader(headerBytes)
                     if (header.length == 0) {
-                        handleIncomingMessage(header.type, null)
+                        if (currentSession !== session) break
+                        handleIncomingMessage(session, header.type, null)
                         applyReplayPacing(header.type)
                         continue
                     }
@@ -894,7 +906,8 @@ class DongleSessionManager(
                         Cpc200Protocol.MessageType.NAVI_VIDEO -> handleNaviVideoMessage(session, header.length)
                         else -> {
                             val payload = session.readPayload(header.length, READ_TIMEOUT_MS)
-                            handleIncomingMessage(header.type, payload)
+                            if (currentSession !== session) break
+                            handleIncomingMessage(session, header.type, payload)
                         }
                     }
                     applyReplayPacing(header.type)
@@ -949,6 +962,7 @@ class DongleSessionManager(
             require(actual == payloadLength) { "Video payload read mismatch: $actual/$payloadLength" }
             meta = Cpc200Protocol.parseVideoMeta(target, offset)
         }
+        if (currentSession !== session) return
 
         val safeMeta = meta ?: return
         renderer.updateVideoFormat(safeMeta.width, safeMeta.height)
@@ -977,9 +991,11 @@ class DongleSessionManager(
     }
 
     private fun handleIncomingMessage(
+        session: DongleConnectionSession,
         type: Int,
         payload: ByteArray?,
     ) {
+        if (currentSession !== session) return
         lastInboundActivityAtMs = SystemClock.elapsedRealtime()
         when (type) {
             Cpc200Protocol.MessageType.HEARTBEAT -> {
