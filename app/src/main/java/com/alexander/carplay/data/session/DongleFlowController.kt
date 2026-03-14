@@ -279,10 +279,17 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.BT_DISCONNECTED -> {
-                if (phase != ProjectionProtocolPhase.STREAMING_ACTIVE && !firstVideoPacketSeen) {
+                val wifiSessionEstablished =
+                    phase == ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
+                        phase == ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
+                        phase == ProjectionProtocolPhase.STREAMING_ACTIVE ||
+                        firstVideoPacketSeen
+
+                if (!wifiSessionEstablished) {
+                    firstVideoPacketSeen = false
                     delegate.stopFrameRequests()
                     beginDiscovery("bluetooth disconnected")
-                    transitionTo(ProjectionProtocolPhase.WAITING_RETRY, "Bluetooth disconnected before stream")
+                    transitionTo(ProjectionProtocolPhase.WAITING_RETRY, "Bluetooth disconnected before Wi-Fi session")
                     delegate.updateState(
                         state = ProjectionConnectionState.WAITING_PHONE,
                         protocolPhase = ProjectionProtocolPhase.WAITING_RETRY,
