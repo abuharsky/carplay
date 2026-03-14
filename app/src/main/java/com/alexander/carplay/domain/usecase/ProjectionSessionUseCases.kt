@@ -1,0 +1,78 @@
+package com.alexander.carplay.domain.usecase
+
+import android.view.MotionEvent
+import android.view.Surface
+import com.alexander.carplay.domain.model.DiagnosticLogEntry
+import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
+import com.alexander.carplay.domain.port.ProjectionSessionPort
+import kotlinx.coroutines.flow.StateFlow
+
+class ObserveProjectionStateUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(): StateFlow<ProjectionSessionSnapshot> = sessionPort.state
+}
+
+class ObserveDiagnosticLogsUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(): StateFlow<List<DiagnosticLogEntry>> = sessionPort.logs
+}
+
+class StartProjectionServiceUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.ensureServiceStarted()
+}
+
+class StartUsbSessionUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.startUsb()
+}
+
+class StartReplaySessionUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(capturePath: String) = sessionPort.startReplay(capturePath)
+}
+
+class BindProjectionUiUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.bind()
+}
+
+class UnbindProjectionUiUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.unbind()
+}
+
+class RequestProjectionReconnectUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.requestReconnect()
+}
+
+class AttachProjectionSurfaceUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(surface: Surface) = sessionPort.attachSurface(surface)
+}
+
+class DetachProjectionSurfaceUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.detachSurface()
+}
+
+class SendProjectionMotionUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(
+        event: MotionEvent,
+        surfaceWidth: Int,
+        surfaceHeight: Int,
+    ) = sessionPort.sendMotionEvent(event, surfaceWidth, surfaceHeight)
+}

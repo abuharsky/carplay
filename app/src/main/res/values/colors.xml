@@ -1,0 +1,17 @@
+<resources>
+    <color name="bg_primary">#050816</color>
+    <color name="bg_secondary">#10192B</color>
+    <color name="overlay_panel">#AA09101C</color>
+    <color name="overlay_border">#33FFFFFF</color>
+    <color name="text_primary">#F2F5FF</color>
+    <color name="text_secondary">#B0BCD6</color>
+    <color name="status_idle">#64748B</color>
+    <color name="status_searching">#2563EB</color>
+    <color name="status_connecting">#0EA5E9</color>
+    <color name="status_init">#D97706</color>
+    <color name="status_waiting_phone">#7C3AED</color>
+    <color name="status_streaming">#16A34A</color>
+    <color name="status_error">#DC2626</color>
+    <color name="launcher_bg">#0D1424</color>
+</resources>
+

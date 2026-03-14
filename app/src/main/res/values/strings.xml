@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">CarPlay Diagnostic</string>
+    <string name="notification_channel_name">CarPlay adapter</string>
+    <string name="notification_title">CarPlay adapter active</string>
+    <string name="notification_text">Foreground service keeps the USB adapter session alive.</string>
+    <string name="attach_prompt_title">CarPlay adapter attached</string>
+    <string name="attach_prompt_text">Open the app to start the diagnostic USB session.</string>
+    <string name="connect">Подключиться</string>
+    <string name="replay_dump">Replay dump</string>
+    <string name="state_idle">IDLE</string>
+    <string name="state_searching">SEARCHING</string>
+    <string name="state_connecting">CONNECTING</string>
+    <string name="state_init">INIT</string>
+    <string name="state_waiting_phone">WAITING_PHONE</string>
+    <string name="state_streaming">STREAMING</string>
+    <string name="state_error">ERROR</string>
+    <string name="logs_title">Diagnostic log</string>
+    <string name="settings">Настройки</string>
+    <string name="collapse_diagnostics">Свернуть диагностику</string>
+    <string name="expand_diagnostics">Развернуть диагностику</string>
+</resources>

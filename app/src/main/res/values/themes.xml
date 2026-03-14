@@ -1,0 +1,18 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.CarPlay" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="colorPrimary">@color/status_searching</item>
+        <item name="colorSecondary">@color/status_connecting</item>
+        <item name="android:windowBackground">@color/bg_primary</item>
+        <item name="materialButtonStyle">@style/Widget.CarPlay.Button</item>
+    </style>
+
+    <style name="Widget.CarPlay.Button" parent="Widget.Material3.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="cornerRadius">18dp</item>
+    </style>
+</resources>
+
