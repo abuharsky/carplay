@@ -2,6 +2,8 @@ package com.alexander.carplay.data.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
+import android.provider.Settings
 import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
 import com.alexander.carplay.domain.model.ProjectionAudioRoute
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
@@ -19,11 +21,17 @@ class SharedPreferencesProjectionSettingsStore(
     companion object {
         private const val PREFS_NAME = "projection_device_settings"
         private const val KEY_LAST_CONNECTED_DEVICE = "last_connected_device"
+        private const val KEY_ADAPTER_NAME = "adapter_name"
+        private const val KEY_AUTO_CONNECT_ENABLED = "auto_connect_enabled"
         private const val KEY_PREFIX = "device:"
+        private const val DEFAULT_ADAPTER_NAME_PREFIX = "Carlink-"
+        private const val DEFAULT_ADAPTER_NAME_DIGITS = 4
+        private const val MAX_ADAPTER_NAME_LENGTH = 16
     }
 
+    private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     override fun getSettings(deviceId: String?): ProjectionDeviceSettings {
         val normalizedId = normalizeDeviceId(deviceId)
@@ -39,6 +47,26 @@ class SharedPreferencesProjectionSettingsStore(
             .apply()
     }
 
+    override fun getAdapterName(): String {
+        return prefs.getString(KEY_ADAPTER_NAME, null)
+            ?.let(::normalizeAdapterName)
+            ?: buildDefaultAdapterName()
+    }
+
+    override fun saveAdapterName(name: String) {
+        prefs.edit()
+            .putString(KEY_ADAPTER_NAME, normalizeAdapterName(name))
+            .apply()
+    }
+
+    override fun isAutoConnectEnabled(): Boolean = prefs.getBoolean(KEY_AUTO_CONNECT_ENABLED, true)
+
+    override fun setAutoConnectEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_AUTO_CONNECT_ENABLED, enabled)
+            .apply()
+    }
+
     override fun getLastConnectedDeviceId(): String? = prefs.getString(KEY_LAST_CONNECTED_DEVICE, null)
 
     override fun setLastConnectedDeviceId(deviceId: String?) {
@@ -49,6 +77,25 @@ class SharedPreferencesProjectionSettingsStore(
 
     private fun normalizeDeviceId(deviceId: String?): String {
         return deviceId?.trim()?.takeIf { it.isNotEmpty() } ?: ProjectionDeviceSettings.DEFAULT_DEVICE_ID
+    }
+
+    private fun normalizeAdapterName(name: String?): String {
+        val normalized = name
+            ?.filter { it.isLetterOrDigit() || it == '_' || it == '-' || it == ' ' }
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.take(MAX_ADAPTER_NAME_LENGTH)
+        return normalized ?: buildDefaultAdapterName()
+    }
+
+    private fun buildDefaultAdapterName(): String {
+        val source = Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: "${Build.MANUFACTURER}-${Build.MODEL}-${appContext.packageName}"
+        val suffix = ((source.hashCode().toLong() and 0x7fffffffL) % 10_000L)
+            .toString()
+            .padStart(DEFAULT_ADAPTER_NAME_DIGITS, '0')
+        return "$DEFAULT_ADAPTER_NAME_PREFIX$suffix"
     }
 
     private fun encodeSettings(settings: ProjectionDeviceSettings): JSONObject {

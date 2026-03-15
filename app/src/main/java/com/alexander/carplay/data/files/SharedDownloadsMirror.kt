@@ -27,6 +27,9 @@ class SharedDownloadsMirror(
     @Volatile
     private var lastWorkingDirectory: File? = null
 
+    @Volatile
+    private var lastReportedPath: String? = null
+
     fun appendLog(line: String) {
         ioExecutor.execute {
             val result = writeFirstAvailable("carplay.log") { file ->
@@ -57,6 +60,9 @@ class SharedDownloadsMirror(
             DOWNLOAD_DIRECTORY_CANDIDATES
                 .map(::File)
                 .forEach(::add)
+            appContext.externalMediaDirs
+                .firstOrNull()
+                ?.let(::add)
             appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let(::add)
         }
 
@@ -74,6 +80,7 @@ class SharedDownloadsMirror(
                 val targetFile = File(directory, name)
                 action(targetFile)
                 lastWorkingDirectory = directory
+                reportResolvedPath(targetFile)
                 return Result.success(targetFile)
             }.onFailure { error ->
                 lastError = error
@@ -89,6 +96,13 @@ class SharedDownloadsMirror(
         require(directory.exists() && directory.isDirectory) {
             "Directory is unavailable: ${directory.absolutePath}"
         }
+    }
+
+    private fun reportResolvedPath(file: File) {
+        val path = file.absolutePath
+        if (lastReportedPath == path) return
+        lastReportedPath = path
+        Log.i(TAG, "Using shared file path: $path")
     }
 
     private fun appendBoundedUtf8(

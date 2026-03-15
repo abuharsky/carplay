@@ -17,7 +17,7 @@ enum class ProjectionAudioPlayerType(
     NAVI("Navigation"),
     SIRI("Siri"),
     PHONE("Call"),
-    ALERT("Alerts"),
+    ALERT("Alert"),
 }
 
 enum class ProjectionEqPreset(

@@ -50,6 +50,7 @@ class DongleServiceConnector(
     private var eventsJob: Job? = null
     private var bound = false
     private var pendingSurface: Surface? = null
+    private var pendingVideoStreamEnabled: Boolean? = null
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val logs = logStore.logs
@@ -77,6 +78,9 @@ class DongleServiceConnector(
             pendingSurface?.let { safeSurface ->
                 binder?.attachSurface(safeSurface)
                 pendingSurface = null
+            }
+            pendingVideoStreamEnabled?.let { enabled ->
+                binder?.setVideoStreamEnabled(enabled)
             }
         }
 
@@ -145,6 +149,12 @@ class DongleServiceConnector(
     fun refreshRuntimeSettings() {
         ensureServiceStarted()
         binder?.refreshRuntimeSettings()
+    }
+
+    fun setVideoStreamEnabled(enabled: Boolean) {
+        ensureServiceStarted()
+        pendingVideoStreamEnabled = enabled
+        binder?.setVideoStreamEnabled(enabled)
     }
 
     fun selectDevice(deviceId: String) {

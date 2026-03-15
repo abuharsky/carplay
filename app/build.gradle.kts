@@ -65,9 +65,6 @@ configurations.all {
         if (requested.group == "androidx.lifecycle") {
             useVersion("2.7.0")
         }
-        if (requested.group == "androidx.emoji2") {
-            useVersion("1.2.0")
-        }
     }
 }
 

@@ -30,6 +30,8 @@ class DongleServiceSessionPort(
 
     override fun refreshRuntimeSettings() = connector.refreshRuntimeSettings()
 
+    override fun setVideoStreamEnabled(enabled: Boolean) = connector.setVideoStreamEnabled(enabled)
+
     override fun selectDevice(deviceId: String) = connector.selectDevice(deviceId)
 
     override fun cancelDeviceConnection() = connector.cancelDeviceConnection()

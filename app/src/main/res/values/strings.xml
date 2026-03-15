@@ -28,6 +28,8 @@
     <string name="cancel_device_connection">Прервать подключение</string>
     <string name="settings_sheet_title">Настройки адаптера</string>
     <string name="settings_sheet_default_device">Профиль нового iPhone</string>
+    <string name="settings_auto_connect">Автоподключение</string>
+    <string name="settings_disconnect">Отключиться</string>
     <string name="settings_sheet_device_template">%1$s</string>
     <string name="settings_main_title">Адаптер</string>
     <string name="settings_main_subtitle">Маршруты подключения</string>
@@ -52,9 +54,12 @@
     <string name="settings_eq_preset_vocal">Vocal</string>
     <string name="settings_eq_preset_bright">Bright</string>
     <string name="settings_eq_preset_custom">Custom</string>
-    <string name="settings_gain">Усиление</string>
+    <string name="settings_gain">Громкость</string>
     <string name="settings_loudness">Loudness</string>
     <string name="settings_bass_boost">Bass Boost</string>
+    <string name="settings_player_volume_template">Громкость %1$s</string>
+    <string name="settings_player_selected">Выбран</string>
+    <string name="settings_player_enhancement_title">Громкость и эффекты: %1$s</string>
     <string name="settings_eq_title">Эквалайзер</string>
     <string name="settings_mic_title">Микрофон</string>
     <string name="settings_mic_subtitle">Вход через адаптер</string>

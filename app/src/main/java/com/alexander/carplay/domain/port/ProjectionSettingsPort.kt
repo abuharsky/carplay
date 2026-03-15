@@ -7,6 +7,14 @@ interface ProjectionSettingsPort {
 
     fun saveSettings(settings: ProjectionDeviceSettings)
 
+    fun getAdapterName(): String
+
+    fun saveAdapterName(name: String)
+
+    fun isAutoConnectEnabled(): Boolean
+
+    fun setAutoConnectEnabled(enabled: Boolean)
+
     fun getLastConnectedDeviceId(): String?
 
     fun setLastConnectedDeviceId(deviceId: String?)

@@ -42,6 +42,10 @@ class DongleFlowController(
 
         fun hasKnownDevices(): Boolean
 
+        fun shouldAutoConnectKnownDevices(): Boolean
+
+        fun requiresManualDeviceSelection(): Boolean
+
         fun prepareForDongleReinit(reason: String)
 
         fun requestReconnect(reason: String)
@@ -65,12 +69,25 @@ class DongleFlowController(
         phase = newPhase
     }
 
+    private fun isWifiSessionEstablished(): Boolean {
+        return phase == ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
+            phase == ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
+            phase == ProjectionProtocolPhase.STREAMING_ACTIVE ||
+            firstVideoPacketSeen
+    }
+
+    private fun isDiscoveryPhaseActive(): Boolean {
+        return phase == ProjectionProtocolPhase.PHONE_SEARCH ||
+            phase == ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED ||
+            phase == ProjectionProtocolPhase.WAITING_RETRY
+    }
+
     fun onSessionReady(config: ProjectionSessionConfig) {
         firstVideoPacketSeen = false
         phase = ProjectionProtocolPhase.NONE
         logStore.info(
             SOURCE,
-            "Queueing init sequence: ${config.width}x${config.height}@${config.fps} dpi=${config.dpi}",
+            "Queueing init sequence: ${config.width}x${config.height}@${config.fps} dpi=${config.dpi} name=${config.boxName}",
         )
         logStore.info(
             SOURCE,
@@ -111,7 +128,7 @@ class DongleFlowController(
 
     fun onDongleOpened() {
         transitionTo(ProjectionProtocolPhase.INIT_ECHO, "Adapter acknowledged Open")
-        if (delegate.hasKnownDevices()) {
+        if (delegate.shouldAutoConnectKnownDevices()) {
             delegate.startBleAdvertising("bt bootstrap while auto-connect scans")
             delegate.requestAutoConnect("adapter opened with known devices")
             delegate.updateState(
@@ -120,6 +137,15 @@ class DongleFlowController(
                 message = "Adapter ready. Scanning and waiting for iPhone",
             )
             logStore.info(SOURCE, "Opened -> startBleAdv + startAutoConnect")
+        } else if (delegate.hasKnownDevices()) {
+            delegate.clearAutoConnectPending()
+            delegate.startBleAdvertising("multiple known devices available; waiting for manual selection")
+            delegate.updateState(
+                state = ProjectionConnectionState.WAITING_PHONE,
+                protocolPhase = ProjectionProtocolPhase.INIT_ECHO,
+                message = "Adapter ready. Select iPhone to connect",
+            )
+            logStore.info(SOURCE, "Opened -> manual device selection required")
         } else {
             delegate.clearAutoConnectPending()
             delegate.startBleAdvertising("no paired devices known after init echo")
@@ -257,6 +283,10 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.CONNECT_DEVICE_FAILED -> {
+                if (isWifiSessionEstablished() || !isDiscoveryPhaseActive()) {
+                    logStore.info(SOURCE, "Ignoring connectDeviceFailed after Wi-Fi session setup")
+                    return
+                }
                 firstVideoPacketSeen = false
                 delegate.stopFrameRequests()
                 beginDiscovery("device connect failed")
@@ -280,13 +310,16 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.BT_DISCONNECTED -> {
-                val wifiSessionEstablished =
-                    phase == ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
-                        phase == ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
-                        phase == ProjectionProtocolPhase.STREAMING_ACTIVE ||
-                        firstVideoPacketSeen
+                if (isWifiSessionEstablished()) {
+                    return
+                }
 
-                if (!wifiSessionEstablished) {
+                if (!isDiscoveryPhaseActive()) {
+                    logStore.info(SOURCE, "Ignoring btDisconnected before discovery started")
+                    return
+                }
+
+                if (!isWifiSessionEstablished()) {
                     firstVideoPacketSeen = false
                     delegate.stopFrameRequests()
                     beginDiscovery("bluetooth disconnected")
@@ -316,6 +349,10 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.DEVICE_NOT_FOUND -> {
+                if (isWifiSessionEstablished() || !isDiscoveryPhaseActive()) {
+                    logStore.info(SOURCE, "Ignoring deviceNotFound after Wi-Fi session setup")
+                    return
+                }
                 firstVideoPacketSeen = false
                 delegate.stopFrameRequests()
                 beginDiscovery("device not found")
@@ -331,7 +368,7 @@ class DongleFlowController(
 
     private fun beginDiscovery(reason: String) {
         delegate.startBleAdvertising(reason)
-        if (delegate.hasKnownDevices()) {
+        if (delegate.shouldAutoConnectKnownDevices()) {
             delegate.requestAutoConnect(reason)
         } else {
             delegate.clearAutoConnectPending()
@@ -339,7 +376,9 @@ class DongleFlowController(
     }
 
     private fun discoveryStatusMessage(): String {
-        return if (delegate.hasKnownDevices()) {
+        return if (delegate.requiresManualDeviceSelection()) {
+            "Select iPhone to connect"
+        } else if (delegate.hasKnownDevices()) {
             "Rescanning and waiting for iPhone"
         } else {
             "BLE pairing mode active"
@@ -347,8 +386,8 @@ class DongleFlowController(
     }
 
     private fun buildInitMessages(config: ProjectionSessionConfig): List<ByteArray> = buildList {
-        add(Cpc200Protocol.sendNumber("/tmp/screen_dpi", config.dpi))
         add(Cpc200Protocol.open(config))
+        add(Cpc200Protocol.sendNumber("/tmp/screen_dpi", config.dpi))
         add(Cpc200Protocol.sendBoolean("/tmp/night_mode", config.nightMode))
         add(Cpc200Protocol.sendNumber("/tmp/hand_drive_mode", config.handDriveMode))
         add(Cpc200Protocol.sendBoolean("/tmp/charge_mode", true))
@@ -357,7 +396,7 @@ class DongleFlowController(
         Cpc200Protocol.icon120(config)?.let { add(it) }
         Cpc200Protocol.icon180(config)?.let { add(it) }
         Cpc200Protocol.icon256(config)?.let { add(it) }
-        logStore.info(SOURCE, "Queueing OEM branding: ${config.oemBranding.label}")
+        logStore.info(SOURCE, "Queueing OEM branding: ${config.oemBranding.label} name=${config.oemBranding.name}")
         add(Cpc200Protocol.boxSettings(config))
         add(Cpc200Protocol.airplayConfig(config))
         add(Cpc200Protocol.command(Cpc200Protocol.Command.SUPPORT_WIFI))
@@ -374,9 +413,9 @@ class DongleFlowController(
         add(
             Cpc200Protocol.command(
                 if (config.useAdapterMic) {
-                    Cpc200Protocol.Command.USE_BOX_I2S_MIC
+                    Cpc200Protocol.Command.MIC
                 } else {
-                    Cpc200Protocol.Command.USE_CAR_MIC
+                    Cpc200Protocol.Command.USE_PHONE_MIC
                 },
             ),
         )

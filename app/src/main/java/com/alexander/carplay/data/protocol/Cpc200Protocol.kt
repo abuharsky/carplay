@@ -177,6 +177,7 @@ object Cpc200Protocol {
         val audioType: Int,
         val payload: ByteArray,
         val command: Int?,
+        val volumeDuration: Float?,
     )
 
     data class DashboardData(
@@ -448,12 +449,18 @@ object Cpc200Protocol {
         val remaining = ByteArray(buffer.remaining())
         buffer.get(remaining)
         val command = if (remaining.size == 1) remaining[0].toInt() and 0xFF else null
+        val volumeDuration = if (remaining.size == 4) {
+            ByteBuffer.wrap(remaining).order(ByteOrder.LITTLE_ENDIAN).float
+        } else {
+            null
+        }
         return AudioPacket(
             decodeType = decodeType,
             volume = volume,
             audioType = audioType,
             payload = remaining,
             command = command,
+            volumeDuration = volumeDuration,
         )
     }
 
@@ -602,6 +609,12 @@ object Cpc200Protocol {
             appendJsonField("androidAutoSizeW", config.width)
             append(',')
             appendJsonField("androidAutoSizeH", config.height)
+            append(',')
+            appendJsonField("wifiName", config.boxName)
+            append(',')
+            appendJsonField("btName", config.boxName)
+            append(',')
+            appendJsonField("boxName", config.boxName)
             append('}')
         }
     }

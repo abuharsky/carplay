@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -46,9 +47,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -74,7 +74,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -86,9 +88,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -227,7 +232,8 @@ fun CarPlayRoute(
     val sessionSnapshot by viewModel.sessionSnapshot.collectAsStateWithLifecycle()
     val devices = remember(uiState.devices) {
         uiState.devices.sortedWith(
-            compareByDescending<CarPlayDeviceUiState> { it.isActive }
+            compareByDescending<CarPlayDeviceUiState> { it.isAvailable }
+                .thenByDescending { it.isActive }
                 .thenByDescending { it.isConnecting }
                 .thenByDescending { it.isSelected }
                 .thenBy { it.title.lowercase() },
@@ -649,12 +655,16 @@ private fun DeviceSelectionField(
     fallbackStatus: String,
 ) {
     val showCompactStatusOnly = selectedDevice == null && devices.isEmpty()
+    val density = LocalDensity.current
 
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier
+            .height(96.dp)
+            .graphicsLayer { clip = false },
+    ) {
         Surface(
             modifier = Modifier
-                .height(96.dp)
-                .fillMaxWidth()
+                .fillMaxSize()
                 .clickable(
                     enabled = devices.isNotEmpty(),
                     onClick = onToggle,
@@ -674,7 +684,7 @@ private fun DeviceSelectionField(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                ActiveStateDot(isActive = selectedDevice?.isActive == true)
+                ActiveStateDot(isActive = selectedDevice?.isAvailable == true || selectedDevice?.isActive == true)
 
                 Column(
                     modifier = Modifier.weight(1f),
@@ -731,54 +741,93 @@ private fun DeviceSelectionField(
             }
         }
 
-        DropdownMenu(
-            expanded = isExpanded && devices.isNotEmpty(),
-            onDismissRequest = onDismiss,
-            modifier = Modifier
-                .widthIn(min = 325.dp, max = 546.dp)
-                .background(Color(0xF4131A28), RoundedCornerShape(24.dp)),
-        ) {
-            devices.forEach { device ->
-                DropdownMenuItem(
-                    text = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            ActiveStateDot(isActive = device.isActive)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = device.title,
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = MaterialTheme.typography.titleLarge.fontSize * 1.3f,
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = device.subtitle,
-                                    color = Color.White.copy(alpha = 0.58f),
-                                    style = MaterialTheme.typography.titleSmall.copy(
-                                        fontWeight = FontWeight.Normal,
-                                        fontSize = MaterialTheme.typography.titleSmall.fontSize * 1.22f,
-                                    ),
-                                )
-                            }
-                            if (device.isConnecting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(21.dp),
-                                    color = Color.White,
-                                    strokeWidth = 2.dp,
-                                )
+        if (isExpanded && devices.isNotEmpty()) {
+            Popup(
+                alignment = Alignment.BottomStart,
+                offset = with(density) { IntOffset(0, (-12).dp.roundToPx()) },
+                onDismissRequest = onDismiss,
+                properties = PopupProperties(
+                    focusable = true,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true,
+                ),
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(min = 325.dp, max = 546.dp),
+                    color = Color(0xF2141B28),
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(30.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+                    shadowElevation = 14.dp,
+                ) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                    ) {
+                        items(devices.size) { index ->
+                            val device = devices[index]
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onSelect(device)
+                                        onDismiss()
+                                    }
+                                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    ActiveStateDot(isActive = device.isAvailable || device.isActive)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = device.title,
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.titleLarge.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = MaterialTheme.typography.titleLarge.fontSize * 1.32f,
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = device.subtitle,
+                                            color = Color.White.copy(alpha = 0.58f),
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontWeight = FontWeight.Normal,
+                                                fontSize = MaterialTheme.typography.titleMedium.fontSize * 1.14f,
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    if (device.isConnecting) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(22.dp),
+                                            color = Color.White,
+                                            strokeWidth = 2.dp,
+                                        )
+                                    }
+                                }
+                                if (index < devices.lastIndex) {
+                                    Spacer(
+                                        modifier = Modifier
+                                            .padding(top = 14.dp)
+                                            .fillMaxWidth()
+                                            .height(1.dp)
+                                            .background(Color.White.copy(alpha = 0.08f)),
+                                    )
+                                }
                             }
                         }
-                    },
-                    onClick = { onSelect(device) },
-                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
-                )
+                    }
+                }
             }
         }
     }
@@ -859,13 +908,28 @@ private fun ProjectionSettingsScreen(
     val loadedSettings = remember(deviceId, deviceName) {
         viewModel.loadDeviceSettings(deviceId)
     }
+    val loadedAdapterName = remember { viewModel.loadAdapterName() }
+    val loadedAutoConnectEnabled = remember { viewModel.loadAutoConnectEnabled() }
     var savedSettings by remember(deviceId, deviceName) { mutableStateOf(loadedSettings) }
     var workingSettings by remember(deviceId, deviceName) { mutableStateOf(loadedSettings) }
+    var savedAdapterName by remember { mutableStateOf(loadedAdapterName) }
+    var workingAdapterName by remember { mutableStateOf(loadedAdapterName) }
+    var savedAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
+    var workingAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
     var showDiagnostics by rememberSaveable(deviceId, deviceName) { mutableStateOf(false) }
 
     val reconnectRequired = remember(workingSettings, savedSettings) {
         workingSettings.audioRoute != savedSettings.audioRoute ||
             workingSettings.micRoute != savedSettings.micRoute
+    } || workingAdapterName != savedAdapterName || workingAutoConnectEnabled != savedAutoConnectEnabled
+
+    LaunchedEffect(deviceId, deviceName) {
+        val adapterName = viewModel.loadAdapterName()
+        savedAdapterName = adapterName
+        workingAdapterName = adapterName
+        val autoConnectEnabled = viewModel.loadAutoConnectEnabled()
+        savedAutoConnectEnabled = autoConnectEnabled
+        workingAutoConnectEnabled = autoConnectEnabled
     }
 
     BackHandler(onBack = onDismiss)
@@ -873,6 +937,7 @@ private fun ProjectionSettingsScreen(
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
     ) {
+        val adapterCardWidth = (maxWidth * 0.18f).coerceIn(320.dp, 420.dp)
         val micCardWidth = (maxWidth * 0.20f).coerceIn(320.dp, 420.dp)
         val audioCardWidth = (maxWidth * 0.22f).coerceIn(360.dp, 460.dp)
         val enhancementCardWidth = (maxWidth * 0.26f).coerceIn(420.dp, 540.dp)
@@ -933,6 +998,10 @@ private fun ProjectionSettingsScreen(
                             }
                         },
                         onSave = {
+                            viewModel.saveAdapterName(workingAdapterName)
+                            viewModel.saveAutoConnectEnabled(workingAutoConnectEnabled)
+                            savedAdapterName = workingAdapterName
+                            savedAutoConnectEnabled = workingAutoConnectEnabled
                             viewModel.saveDeviceSettings(workingSettings, reconnectRequired)
                             onDismiss()
                         },
@@ -962,6 +1031,22 @@ private fun ProjectionSettingsScreen(
                                 .padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(24.dp),
                         ) {
+                            AdapterIdentitySection(
+                                modifier = Modifier
+                                    .width(adapterCardWidth)
+                                    .fillMaxHeight(),
+                                adapterName = workingAdapterName,
+                                onAdapterNameChange = { workingAdapterName = sanitizeAdapterNameInput(it) },
+                                autoConnectEnabled = workingAutoConnectEnabled,
+                                onAutoConnectChanged = { workingAutoConnectEnabled = it },
+                                onDisconnect = {
+                                    workingAutoConnectEnabled = false
+                                    savedAutoConnectEnabled = false
+                                    viewModel.disconnectAndDisableAutoConnect()
+                                    onDismiss()
+                                },
+                            )
+
                             MicrophoneSection(
                                 modifier = Modifier
                                     .width(micCardWidth)
@@ -994,6 +1079,7 @@ private fun ProjectionSettingsScreen(
                                         .width(audioCardWidth)
                                         .fillMaxHeight(),
                                     isEnabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
+                                    playerSettings = workingSettings.playerSettings,
                                     selectedPlayer = workingSettings.selectedPlayer,
                                     onToggleEnabled = { enabled ->
                                         workingSettings = workingSettings.copy(
@@ -1205,6 +1291,69 @@ private fun AudioSettingsGroup(
 }
 
 @Composable
+private fun AdapterIdentitySection(
+    adapterName: String,
+    onAdapterNameChange: (String) -> Unit,
+    autoConnectEnabled: Boolean,
+    onAutoConnectChanged: (Boolean) -> Unit,
+    onDisconnect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SettingsSectionCard(
+        modifier = modifier,
+        title = "Адаптер",
+        subtitle = "Имя для box, Wi-Fi и Bluetooth",
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White.copy(alpha = 0.05f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)),
+        ) {
+            BasicTextField(
+                value = adapterName,
+                onValueChange = onAdapterNameChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.headlineSmall.copy(
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                cursorBrush = SolidColor(Color.White),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                decorationBox = { innerTextField ->
+                    if (adapterName.isBlank()) {
+                        Text(
+                            text = "Carlink-1234",
+                            color = Color.White.copy(alpha = 0.32f),
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                    }
+                    innerTextField()
+                },
+            )
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        AdapterToggleRow(
+            title = stringResource(id = R.string.settings_auto_connect),
+            checked = autoConnectEnabled,
+            onCheckedChange = onAutoConnectChanged,
+        )
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        HeaderButton(
+            label = stringResource(id = R.string.settings_disconnect),
+            onClick = onDisconnect,
+            subtle = true,
+        )
+    }
+}
+
+@Composable
 private fun SettingsSectionCard(
     modifier: Modifier = Modifier,
     title: String,
@@ -1247,6 +1396,7 @@ private fun SettingsSectionCard(
 private fun AudioProfilesSection(
     modifier: Modifier = Modifier,
     isEnabled: Boolean,
+    playerSettings: Map<ProjectionAudioPlayerType, ProjectionPlayerAudioSettings>,
     onToggleEnabled: (Boolean) -> Unit,
     selectedPlayer: ProjectionAudioPlayerType,
     onSelectPlayer: (ProjectionAudioPlayerType) -> Unit,
@@ -1272,6 +1422,7 @@ private fun AudioProfilesSection(
             items(ProjectionAudioPlayerType.entries.size) { index ->
                 val player = ProjectionAudioPlayerType.entries[index]
                 val isSelected = selectedPlayer == player
+                val volumeLabel = formatVolumePercent(playerSettings[player]?.gainMultiplier ?: 1f)
                 Surface(
                     shape = RoundedCornerShape(24.dp),
                     color = if (isSelected) {
@@ -1291,15 +1442,28 @@ private fun AudioProfilesSection(
                             .padding(horizontal = 18.dp, vertical = 18.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = playerLabel(player),
-                            color = if (isSelected) Color(0xFF09111E) else Color.White,
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                        Column(
                             modifier = Modifier.weight(1f),
-                        )
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                text = playerLabel(player),
+                                color = if (isSelected) Color(0xFF09111E) else Color.White,
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                            Text(
+                                text = stringResource(id = R.string.settings_player_volume_template, volumeLabel),
+                                color = if (isSelected) {
+                                    if (isEnabled) Color(0xFF09111E).copy(alpha = 0.68f) else Color.White.copy(alpha = 0.82f)
+                                } else {
+                                    Color.White.copy(alpha = 0.56f)
+                                },
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                            )
+                        }
                         if (isSelected) {
                             Text(
-                                text = "Выбран",
+                                text = stringResource(id = R.string.settings_player_selected),
                                 color = if (isEnabled) Color(0xFF09111E).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.78f),
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                             )
@@ -1320,7 +1484,7 @@ private fun PlayerEnhancementSection(
 ) {
     SettingsSectionCard(
         modifier = modifier,
-        title = "Усиление: ${playerLabel(selectedPlayer)}",
+        title = stringResource(id = R.string.settings_player_enhancement_title, playerLabel(selectedPlayer)),
     ) {
         Row(
             modifier = Modifier
@@ -1331,9 +1495,9 @@ private fun PlayerEnhancementSection(
             VerticalControlSlider(
                 modifier = Modifier.weight(1f),
                 title = stringResource(id = R.string.settings_gain),
-                valueLabel = formatGain(playerSettings.gainMultiplier),
+                valueLabel = formatVolumePercent(playerSettings.gainMultiplier),
                 value = playerSettings.gainMultiplier,
-                valueRange = 1f..3f,
+                valueRange = 0f..3f,
                 onValueChange = {
                     onPlayerSettingsChanged(
                         playerSettings.copy(gainMultiplier = it),
@@ -1889,11 +2053,19 @@ private fun playerLabel(player: ProjectionAudioPlayerType): String {
         ProjectionAudioPlayerType.MEDIA -> "Медиа"
         ProjectionAudioPlayerType.NAVI -> "Навигатор"
         ProjectionAudioPlayerType.SIRI -> "Siri"
-        ProjectionAudioPlayerType.PHONE -> "Звонок"
-        ProjectionAudioPlayerType.ALERT -> "Уведомления"
+        ProjectionAudioPlayerType.PHONE -> "Разговор"
+        ProjectionAudioPlayerType.ALERT -> "Рингтон"
     }
 }
 
+private fun sanitizeAdapterNameInput(input: String): String {
+    return input
+        .filter { it.isLetterOrDigit() || it == '_' || it == '-' || it == ' ' }
+        .take(16)
+}
+
 private fun formatGain(value: Float): String = String.format("%.1fx", value)
+
+private fun formatVolumePercent(value: Float): String = "${(value * 100f).roundToInt()}%"
 
 private fun formatEq(value: Float): String = String.format("%+.0f dB", value)

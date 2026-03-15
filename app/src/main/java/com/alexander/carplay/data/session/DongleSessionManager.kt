@@ -62,6 +62,7 @@ class DongleSessionManager(
         private const val RECONNECT_DELAY_MS = 2_000L
         private const val MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS = 120_000L
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
+        private const val USB_POST_OPEN_STABILIZATION_DELAY_MS = 250L
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
@@ -85,6 +86,7 @@ class DongleSessionManager(
     private val touchInputMapper = TouchInputMapper()
     private val outboundQueue = LinkedBlockingQueue<ByteArray>()
     private val knownDevices = linkedMapOf<String, DongleKnownDevice>()
+    private val availableDeviceIds = linkedSetOf<String>()
     private val _state = MutableStateFlow(ProjectionSessionSnapshot())
     private val _events = MutableSharedFlow<ProjectionUiEvent>(extraBufferCapacity = 8)
     private val flowController = DongleFlowController(
@@ -136,6 +138,12 @@ class DongleSessionManager(
 
             override fun hasKnownDevices(): Boolean = knownDevices.isNotEmpty()
 
+            override fun shouldAutoConnectKnownDevices(): Boolean =
+                this@DongleSessionManager.shouldAutoConnectKnownDevices()
+
+            override fun requiresManualDeviceSelection(): Boolean =
+                this@DongleSessionManager.requiresManualDeviceSelection()
+
             override fun prepareForDongleReinit(reason: String) {
                 resetProjectionRuntime(reason)
             }
@@ -169,7 +177,7 @@ class DongleSessionManager(
     private var shuttingDown = false
     private var sessionMode = SessionMode.USB
     private var surfaceAttached = false
-    private var sessionConfig = ProjectionSessionConfig.fromContext(appContext)
+    private var sessionConfig = ProjectionSessionConfig.fromContext(appContext, settingsStore.getAdapterName())
     private var currentSession: DongleConnectionSession? = null
     private var currentDevice: UsbDevice? = null
     private var currentConnectionLabel: String? = null
@@ -177,6 +185,8 @@ class DongleSessionManager(
     private var currentSelectedDeviceId: String? = null
     private var currentActiveDeviceId: String? = null
     private var currentPeerBluetoothDeviceId: String? = null
+    private var pendingUsbPermissionDeviceId: Int? = null
+    private var openingUsbDeviceId: Int? = null
     private var pendingConnectionDeviceId: String? = null
     private var pendingDeviceSelectionSent = false
     private var replayCapturePath: String? = null
@@ -189,6 +199,7 @@ class DongleSessionManager(
     private var lastInboundActivityAtMs = 0L
     private var lastHeartbeatEchoAtMs = 0L
     private var writeLoopStarted = false
+    private var videoStreamEnabled = false
     private var automotivePowerSnapshot = AutomotivePowerSnapshot()
     private var vehicleActive = true
     private var manualVehicleGateBypassUntilMs = 0L
@@ -295,6 +306,9 @@ class DongleSessionManager(
         executors.session.execute {
             if (sessionMode != SessionMode.USB) return@execute
             if (!started || !usbTransport.isKnownDevice(device) || device == null) return@execute
+            if (pendingUsbPermissionDeviceId == device.deviceId) {
+                pendingUsbPermissionDeviceId = null
+            }
             if (granted) {
                 logStore.info(SOURCE, "USB permission granted for ${device.deviceName}")
                 connectOrRequestPermission("permission granted")
@@ -321,6 +335,18 @@ class DongleSessionManager(
         executors.session.execute {
             applyRuntimeDeviceSettings()
             refreshState()
+        }
+    }
+
+    fun setVideoStreamEnabled(enabled: Boolean) {
+        executors.session.execute {
+            if (videoStreamEnabled == enabled) return@execute
+            videoStreamEnabled = enabled
+            logStore.info(
+                SOURCE,
+                "Video stream target changed: enabled=$enabled",
+            )
+            syncVideoFocus("ui visibility changed")
         }
     }
 
@@ -356,16 +382,20 @@ class DongleSessionManager(
             pendingConnectionDeviceId = null
             pendingDeviceSelectionSent = false
             currentPeerBluetoothDeviceId = null
+            currentActiveDeviceId = null
+            currentPhoneType = null
             if (currentSession != null) {
                 queueOutbound(Cpc200Protocol.disconnectPhone())
             }
             refreshState(
+                state = ProjectionConnectionState.WAITING_PHONE,
                 message = if (pendingId != null) {
-                    "Connection cancelled: ${describeKnownDevice(pendingId)}"
+                    "Отключение: ${describeKnownDevice(pendingId)}"
                 } else {
-                    "Connection cancelled"
+                    "Отключено"
                 },
                 phoneDescription = null,
+                streamDescription = null,
             )
             if (!isVehicleGateOpen()) {
                 updateWaitingForVehicleState("cancel device connection")
@@ -543,20 +573,35 @@ class DongleSessionManager(
 
         val device = usbTransport.findKnownDevice()
         if (device == null) {
+            cancelReconnect()
+            currentDevice = null
+            currentConnectionLabel = null
+            pendingUsbPermissionDeviceId = null
+            openingUsbDeviceId = null
             updateState(
                 state = ProjectionConnectionState.SEARCHING,
                 message = "Waiting for CarPlay adapter over USB",
                 adapterDescription = null,
             )
-            scheduleReconnect("device scan", RECONNECT_DELAY_MS)
             return
         }
 
+        cancelReconnect()
         currentDevice = device
         val adapterLabel = "${device.deviceName} (0x${device.productId.toString(16)})"
         currentConnectionLabel = adapterLabel
 
         if (!usbTransport.hasPermission(device)) {
+            if (pendingUsbPermissionDeviceId == device.deviceId) {
+                updateState(
+                    state = ProjectionConnectionState.WAITING_PERMISSION,
+                    message = "Waiting for USB permission",
+                    adapterDescription = adapterLabel,
+                )
+                return
+            }
+
+            pendingUsbPermissionDeviceId = device.deviceId
             updateState(
                 state = ProjectionConnectionState.WAITING_PERMISSION,
                 message = "Waiting for USB permission",
@@ -566,7 +611,17 @@ class DongleSessionManager(
             return
         }
 
-        cancelReconnect()
+        pendingUsbPermissionDeviceId = null
+        if (openingUsbDeviceId == device.deviceId) {
+            updateState(
+                state = ProjectionConnectionState.CONNECTING,
+                message = "Opening USB connection ($reason)",
+                adapterDescription = adapterLabel,
+            )
+            return
+        }
+
+        openingUsbDeviceId = device.deviceId
         updateState(
             state = ProjectionConnectionState.CONNECTING,
             message = "Opening USB connection ($reason)",
@@ -584,6 +639,13 @@ class DongleSessionManager(
             Thread.sleep(USB_OPEN_STABILIZATION_DELAY_MS)
 
             val session = usbTransport.open(device)
+            if (USB_POST_OPEN_STABILIZATION_DELAY_MS > 0L) {
+                logStore.info(
+                    SOURCE,
+                    "Applying USB post-open stabilization delay (${USB_POST_OPEN_STABILIZATION_DELAY_MS}ms)",
+                )
+                Thread.sleep(USB_POST_OPEN_STABILIZATION_DELAY_MS)
+            }
             currentSession = session
             currentConnectionLabel = session.description
             sessionConfig = buildSessionConfig()
@@ -594,6 +656,10 @@ class DongleSessionManager(
         } catch (t: Throwable) {
             logStore.error(SOURCE, "Unable to open session", t)
             closeCurrentSession("open session failed", scheduleReconnect = true)
+        } finally {
+            if (openingUsbDeviceId == device.deviceId) {
+                openingUsbDeviceId = null
+            }
         }
     }
 
@@ -695,9 +761,12 @@ class DongleSessionManager(
     private fun resetProjectionRuntime(reason: String) {
         currentActiveDeviceId = null
         currentPeerBluetoothDeviceId = null
+        pendingUsbPermissionDeviceId = null
+        openingUsbDeviceId = null
         pendingConnectionDeviceId = null
         pendingDeviceSelectionSent = false
         knownDevices.clear()
+        availableDeviceIds.clear()
         outboundQueue.clear()
         clearAutoConnectPending()
         bleAdvertisingActive = false
@@ -741,8 +810,39 @@ class DongleSessionManager(
         devices.forEach(::rememberKnownDevice)
     }
 
+    private fun refreshAvailableDevices(devices: List<DongleKnownDevice>) {
+        availableDeviceIds.clear()
+        devices.forEach { device ->
+            val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(device.id)
+            if (normalizedId.isNotBlank()) {
+                availableDeviceIds += normalizedId
+            }
+        }
+    }
+
+    private fun effectiveKnownDeviceCount(): Int {
+        return if (availableDeviceIds.isNotEmpty()) {
+            availableDeviceIds.size
+        } else {
+            knownDevices.size
+        }
+    }
+
+    private fun requiresManualDeviceSelection(): Boolean {
+        if (!settingsStore.isAutoConnectEnabled()) return knownDevices.isNotEmpty()
+        if (pendingConnectionDeviceId != null) return false
+        return effectiveKnownDeviceCount() > 1
+    }
+
+    private fun shouldAutoConnectKnownDevices(): Boolean {
+        if (!settingsStore.isAutoConnectEnabled()) return false
+        if (knownDevices.isEmpty()) return false
+        if (pendingConnectionDeviceId != null) return true
+        return !requiresManualDeviceSelection()
+    }
+
     private fun buildSessionConfig(): ProjectionSessionConfig {
-        val baseConfig = ProjectionSessionConfig.fromContext(appContext)
+        val baseConfig = ProjectionSessionConfig.fromContext(appContext, settingsStore.getAdapterName())
         val preferredDeviceId = pendingConnectionDeviceId
             ?: currentActiveDeviceId
             ?: currentSelectedDeviceId
@@ -801,6 +901,7 @@ class DongleSessionManager(
                     id = normalizedId,
                     name = device.name ?: normalizedId,
                     type = device.type,
+                    isAvailable = normalizedId in availableDeviceIds,
                     isActive = normalizedId == currentActiveDeviceId,
                     isSelected = normalizedId == currentSelectedDeviceId,
                     isConnecting = normalizedId == pendingConnectionDeviceId || normalizedId == currentPeerBluetoothDeviceId,
@@ -808,6 +909,7 @@ class DongleSessionManager(
             }
             .sortedWith(
                 compareByDescending<ProjectionDeviceSnapshot> { it.isConnecting }
+                    .thenByDescending { it.isAvailable }
                     .thenByDescending { it.isActive }
                     .thenByDescending { it.isSelected }
                     .thenBy { it.name.lowercase() },
@@ -878,6 +980,9 @@ class DongleSessionManager(
         }
 
         rememberKnownDevices(snapshot.devices)
+        if (snapshot.devices.isNotEmpty()) {
+            refreshAvailableDevices(snapshot.devices)
+        }
         logBoxSettingsSnapshot(snapshot)
 
         if (snapshot.activeDeviceId != null) {
@@ -893,6 +998,8 @@ class DongleSessionManager(
                 videoHeight = _state.value.videoHeight,
             )
         } else {
+            currentActiveDeviceId = null
+            currentPhoneType = null
             refreshState()
         }
 
@@ -1034,11 +1141,15 @@ class DongleSessionManager(
                     applyReplayPacing(header.type)
                 }
             } catch (t: Throwable) {
-                if (!shuttingDown) {
+                if (!shuttingDown && currentSession === session) {
                     logStore.error(SOURCE, "Read loop failed", t)
                     executors.session.execute {
-                        closeCurrentSession("read loop failed", scheduleReconnect = true)
+                        if (currentSession === session) {
+                            closeCurrentSession("read loop failed", scheduleReconnect = true)
+                        }
                     }
+                } else if (!shuttingDown) {
+                    logStore.info(SOURCE, "Ignoring stale read loop failure from closed session")
                 }
             }
         }
@@ -1052,13 +1163,20 @@ class DongleSessionManager(
                 while (!shuttingDown) {
                     val message = outboundQueue.poll(1, TimeUnit.SECONDS) ?: continue
                     val session = currentSession ?: continue
+                    val outboundDescription = describeOutboundMessage(message)
                     try {
                         session.write(message, WRITE_TIMEOUT_MS)
                     } catch (t: Throwable) {
-                        logStore.error(SOURCE, "Write failed", t)
-                        outboundQueue.clear()
-                        executors.session.execute {
-                            closeCurrentSession("write failed", scheduleReconnect = true)
+                        if (currentSession === session) {
+                            logStore.error(SOURCE, "Write failed while sending: $outboundDescription", t)
+                            outboundQueue.clear()
+                            executors.session.execute {
+                                if (currentSession === session) {
+                                    closeCurrentSession("write failed", scheduleReconnect = true)
+                                }
+                            }
+                        } else {
+                            logStore.info(SOURCE, "Ignoring stale write failure from closed session")
                         }
                     }
                 }
@@ -1074,18 +1192,18 @@ class DongleSessionManager(
         session: DongleConnectionSession,
         payloadLength: Int,
     ) {
-        var meta: Cpc200Protocol.VideoMeta? = null
+        val packet = ByteArray(payloadLength)
+        val actual = session.readPayloadInto(packet, 0, payloadLength, READ_TIMEOUT_MS)
+        require(actual == payloadLength) { "Video payload read mismatch: $actual/$payloadLength" }
+        if (currentSession !== session) return
+
+        val safeMeta = Cpc200Protocol.parseVideoMeta(packet, 0)
         renderer.processDataDirect(
             payloadLength,
             Cpc200Protocol.VIDEO_SUB_HEADER_SIZE,
         ) { target, offset ->
-            val actual = session.readPayloadInto(target, offset, payloadLength, READ_TIMEOUT_MS)
-            require(actual == payloadLength) { "Video payload read mismatch: $actual/$payloadLength" }
-            meta = Cpc200Protocol.parseVideoMeta(target, offset)
+            System.arraycopy(packet, 0, target, offset, payloadLength)
         }
-        if (currentSession !== session) return
-
-        val safeMeta = meta ?: return
         markInboundActivity("Video ${safeMeta.width}x${safeMeta.height}")
         renderer.updateVideoFormat(safeMeta.width, safeMeta.height)
         if (pendingConnectionDeviceId != null) {
@@ -1156,6 +1274,7 @@ class DongleSessionManager(
                     "Phone plugged: ${Cpc200Protocol.describePhoneType(pluggedInfo.phoneType)}, wifi=${pluggedInfo.wifiState}",
                 )
                 flowController.onPlugged(pluggedInfo)
+                syncVideoFocus("plugged")
             }
 
             Cpc200Protocol.MessageType.PHASE -> {
@@ -1337,6 +1456,29 @@ class DongleSessionManager(
         }
     }
 
+    private fun syncVideoFocus(reason: String) {
+        val session = currentSession ?: return
+        val phase = _state.value.protocolPhase
+        val canControlVideoFocus =
+            currentPhoneType != null ||
+                phase == ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
+                phase == ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
+                phase == ProjectionProtocolPhase.STREAMING_ACTIVE
+        if (!canControlVideoFocus) return
+
+        val commandId = if (videoStreamEnabled) {
+            Cpc200Protocol.Command.REQUEST_VIDEO_FOCUS
+        } else {
+            Cpc200Protocol.Command.RELEASE_VIDEO_FOCUS
+        }
+
+        queueOutbound(Cpc200Protocol.command(commandId))
+        logStore.info(
+            SOURCE,
+            "Video focus ${if (videoStreamEnabled) "requested" else "released"}: $reason (${session.description})",
+        )
+    }
+
     private fun restartSessionNow(reason: String) {
         val restartMode = sessionMode
         val replayPath = replayCapturePath
@@ -1356,43 +1498,45 @@ class DongleSessionManager(
 
     private fun logOutboundMessage(message: ByteArray) {
         try {
-            if (message.size < Cpc200Protocol.HEADER_SIZE) return
-            val header = Cpc200Protocol.parseHeader(message.copyOfRange(0, Cpc200Protocol.HEADER_SIZE))
-            if (header.type == Cpc200Protocol.MessageType.MULTI_TOUCH || header.type == Cpc200Protocol.MessageType.AUDIO) return
-            val payload = message.copyOfRange(Cpc200Protocol.HEADER_SIZE, message.size)
-            logStore.info(SOURCE, "SEND ${describeOutboundMessage(header.type, payload)}")
+            val description = describeOutboundMessage(message) ?: return
+            logStore.info(SOURCE, "SEND $description")
         } catch (_: Throwable) {
         }
     }
 
-    private fun describeOutboundMessage(
-        type: Int,
-        payload: ByteArray,
-    ): String = when (type) {
-        Cpc200Protocol.MessageType.HEARTBEAT -> Cpc200Protocol.describeMessageType(type)
-        Cpc200Protocol.MessageType.OPEN -> {
+    private fun describeOutboundMessage(message: ByteArray): String? {
+        if (message.size < Cpc200Protocol.HEADER_SIZE) return null
+        val header = Cpc200Protocol.parseHeader(message.copyOfRange(0, Cpc200Protocol.HEADER_SIZE))
+        if (header.type == Cpc200Protocol.MessageType.MULTI_TOUCH || header.type == Cpc200Protocol.MessageType.AUDIO) {
+            return null
+        }
+        val payload = message.copyOfRange(Cpc200Protocol.HEADER_SIZE, message.size)
+        return when (header.type) {
+            Cpc200Protocol.MessageType.HEARTBEAT -> Cpc200Protocol.describeMessageType(header.type)
+            Cpc200Protocol.MessageType.OPEN -> {
             val openedInfo = Cpc200Protocol.parseOpen(payload)
             "Open ${openedInfo.width}x${openedInfo.height}@${openedInfo.fps}"
         }
 
-        Cpc200Protocol.MessageType.COMMAND -> {
+            Cpc200Protocol.MessageType.COMMAND -> {
             val command = Cpc200Protocol.parseCommand(payload)
             "Command ${Cpc200Protocol.describeCommand(command)}"
         }
 
-        Cpc200Protocol.MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS -> {
+            Cpc200Protocol.MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS -> {
             "AutoConnectByBluetoothAddress ${Cpc200Protocol.parseDeviceIdentifier(payload)}"
         }
 
-        Cpc200Protocol.MessageType.SEND_FILE -> {
+            Cpc200Protocol.MessageType.SEND_FILE -> {
             "SendFile ${parseSendFilePath(payload)}"
         }
 
-        Cpc200Protocol.MessageType.BOX_SETTINGS -> {
+            Cpc200Protocol.MessageType.BOX_SETTINGS -> {
             "BoxSettings ${payload.toString(Charsets.UTF_8).take(220)}"
         }
 
-        else -> Cpc200Protocol.describeMessageType(type)
+            else -> Cpc200Protocol.describeMessageType(header.type)
+        }
     }
 
     private fun parseSendFilePath(payload: ByteArray): String {

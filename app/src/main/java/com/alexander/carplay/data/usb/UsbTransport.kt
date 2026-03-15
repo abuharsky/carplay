@@ -62,6 +62,8 @@ class AndroidUsbTransport(
     companion object {
         const val ACTION_USB_PERMISSION = "com.alexander.carplay.USB_PERMISSION"
         private const val SOURCE = "USB"
+        private const val INITIAL_WRITE_RETRY_COUNT = 3
+        private const val INITIAL_WRITE_RETRY_DELAY_MS = 200L
     }
 
     private val appContext = context.applicationContext
@@ -94,20 +96,32 @@ class AndroidUsbTransport(
         val connection = usbManager.openDevice(device)
             ?: throw IOException("Unable to open USB device ${device.deviceName}")
 
-        val usbInterface = device.getInterface(0)
+        val configuration = device.getConfiguration(0)
+        if (!connection.setConfiguration(configuration)) {
+            logStore.info(
+                SOURCE,
+                "USB setConfiguration returned false for ${device.deviceName}, continuing with interface scan",
+            )
+        }
+
+        val interfaceWithEndpoints = findInterfaceWithEndpoints(device)
+            ?: run {
+                connection.close()
+                throw IOException("No suitable bulk IN/OUT interface found for ${device.deviceName}")
+            }
+
+        val usbInterface = interfaceWithEndpoints.first
+        val inputEndpoint = interfaceWithEndpoints.second
+        val outputEndpoint = interfaceWithEndpoints.third
+
         if (!connection.claimInterface(usbInterface, true)) {
             connection.close()
             throw IOException("Unable to claim USB interface for ${device.deviceName}")
         }
 
-        val inputEndpoint = findEndpoint(usbInterface, UsbConstants.USB_DIR_IN)
-            ?: throw IOException("Bulk IN endpoint not found")
-        val outputEndpoint = findEndpoint(usbInterface, UsbConstants.USB_DIR_OUT)
-            ?: throw IOException("Bulk OUT endpoint not found")
-
         logStore.info(
             SOURCE,
-            "USB open: ${device.deviceName}, pid=0x${device.productId.toString(16)}, iface=${usbInterface.id}",
+            "USB open: ${device.deviceName}, pid=0x${device.productId.toString(16)}, config=${configuration.id}, iface=${usbInterface.id}, in=0x${inputEndpoint.address.toString(16)}, out=0x${outputEndpoint.address.toString(16)}",
         )
 
         return AndroidUsbConnectionSession(
@@ -128,6 +142,21 @@ class AndroidUsbTransport(
             endpoint.type == UsbConstants.USB_ENDPOINT_XFER_BULK && endpoint.direction == direction
         }
 
+    private fun findInterfaceWithEndpoints(device: UsbDevice): Triple<UsbInterface, UsbEndpoint, UsbEndpoint>? =
+        (0 until device.interfaceCount)
+            .asSequence()
+            .map { device.getInterface(it) }
+            .mapNotNull { usbInterface ->
+                val inputEndpoint = findEndpoint(usbInterface, UsbConstants.USB_DIR_IN)
+                val outputEndpoint = findEndpoint(usbInterface, UsbConstants.USB_DIR_OUT)
+                if (inputEndpoint != null && outputEndpoint != null) {
+                    Triple(usbInterface, inputEndpoint, outputEndpoint)
+                } else {
+                    null
+                }
+            }
+            .firstOrNull()
+
     private inner class AndroidUsbConnectionSession(
         private val device: UsbDevice,
         private val connection: UsbDeviceConnection,
@@ -137,6 +166,7 @@ class AndroidUsbTransport(
     ) : DongleConnectionSession {
         override val description: String =
             "${device.deviceName} (0x${device.productId.toString(16)})"
+        private var hasSuccessfulWrite = false
 
         override fun readHeader(timeoutMs: Int): ByteArray? {
             val header = ByteArray(Cpc200Protocol.HEADER_SIZE)
@@ -189,11 +219,27 @@ class AndroidUsbTransport(
             var offset = 0
             while (offset < data.size) {
                 val chunk = minOf(Cpc200Protocol.MAX_USB_CHUNK, data.size - offset)
-                val actual = connection.bulkTransfer(outputEndpoint, data, offset, chunk, timeoutMs)
+                var actual = connection.bulkTransfer(outputEndpoint, data, offset, chunk, timeoutMs)
+                if (!hasSuccessfulWrite && offset == 0 && actual <= 0) {
+                    for (attempt in 1..INITIAL_WRITE_RETRY_COUNT) {
+                        logStore.info(
+                            SOURCE,
+                            "Retrying initial USB write ($attempt/$INITIAL_WRITE_RETRY_COUNT) for ${device.deviceName}",
+                        )
+                        Thread.sleep(INITIAL_WRITE_RETRY_DELAY_MS)
+                        actual = connection.bulkTransfer(outputEndpoint, data, offset, chunk, timeoutMs)
+                        if (actual > 0) {
+                            break
+                        }
+                    }
+                }
                 when {
                     actual < 0 -> throw IOException("bulkTransfer OUT failed at offset=$offset")
                     actual == 0 -> throw IOException("bulkTransfer OUT timed out at offset=$offset")
-                    else -> offset += actual
+                    else -> {
+                        offset += actual
+                        hasSuccessfulWrite = true
+                    }
                 }
             }
         }

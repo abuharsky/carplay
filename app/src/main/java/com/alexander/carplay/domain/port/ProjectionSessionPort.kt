@@ -27,6 +27,8 @@ interface ProjectionSessionPort {
 
     fun refreshRuntimeSettings()
 
+    fun setVideoStreamEnabled(enabled: Boolean)
+
     fun selectDevice(deviceId: String)
 
     fun cancelDeviceConnection()

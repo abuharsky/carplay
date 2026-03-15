@@ -155,6 +155,10 @@ class DongleService : Service() {
             sessionManager.refreshRuntimeSettings()
         }
 
+        fun setVideoStreamEnabled(enabled: Boolean) {
+            sessionManager.setVideoStreamEnabled(enabled)
+        }
+
         fun selectDevice(deviceId: String) {
             sessionManager.selectDevice(deviceId)
         }

@@ -71,7 +71,9 @@ class Cpc200ProtocolTest {
         assertThat(payload).contains("\"mediaDelay\":300")
         assertThat(payload).contains("\"androidAutoSizeW\":1280")
         assertThat(payload).contains("\"androidAutoSizeH\":720")
-        assertThat(payload).doesNotContain("wifiName")
+        assertThat(payload).contains("\"wifiName\":\"Carlink\"")
+        assertThat(payload).contains("\"btName\":\"Carlink\"")
+        assertThat(payload).contains("\"boxName\":\"Carlink\"")
         assertThat(payload).doesNotContain("\"aaW\":")
     }
 

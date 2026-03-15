@@ -14,6 +14,7 @@ import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionPlayerAudioSettings
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 class AudioStreamManager(
     private val logStore: DiagnosticLogStore,
@@ -30,6 +31,11 @@ class AudioStreamManager(
         ALERT,
     }
 
+    private data class AudioKey(
+        val decodeType: Int,
+        val audioType: Int,
+    )
+
     private data class StreamFormat(
         val sampleRate: Int,
         val channelMask: Int,
@@ -44,8 +50,14 @@ class AudioStreamManager(
         val loudnessEnhancer: LoudnessEnhancer?,
     )
 
-    private val tracks = mutableMapOf<StreamKey, ManagedTrack>()
-    private var activeStream: StreamKey = StreamKey.MEDIA
+    private data class VolumeDirective(
+        val gain: Float,
+        val expiresAtMs: Long,
+    )
+
+    private val tracks = mutableMapOf<AudioKey, ManagedTrack>()
+    private val categories = mutableMapOf<AudioKey, StreamKey>()
+    private val protocolVolumeDirectives = mutableMapOf<AudioKey, VolumeDirective>()
     private var currentDeviceSettings: ProjectionDeviceSettings? = null
 
     fun updateDeviceSettings(settings: ProjectionDeviceSettings?) {
@@ -54,28 +66,54 @@ class AudioStreamManager(
             SOURCE,
             "Device audio settings applied: route=${settings?.audioRoute ?: "default"}, mic=${settings?.micRoute ?: "default"}",
         )
-        tracks.forEach { (streamKey, managedTrack) ->
-            applyEffects(managedTrack, settingsFor(streamKey))
+        tracks.forEach { (audioKey, managedTrack) ->
+            categories[audioKey]?.let { category ->
+                applyEffects(managedTrack, settingsFor(category))
+            }
         }
     }
 
     fun handleAudioPacket(packet: AudioPacket) {
+        cleanupExpiredVolumeDirectives()
+
         packet.command?.let { command ->
-            handleCommand(command, packet.decodeType)
+            handleCommand(command, AudioKey(packet.decodeType, packet.audioType))
+            return
+        }
+
+        packet.volumeDuration?.let { duration ->
+            handleVolumeDirective(
+                audioKey = AudioKey(packet.decodeType, packet.audioType),
+                volume = packet.volume,
+                durationSeconds = duration,
+            )
             return
         }
 
         if (packet.payload.size <= 4) return
 
-        val stream = tracks[activeStream] ?: prepareTrack(activeStream, packet.decodeType)
-        if (stream == null) {
-            logStore.error(SOURCE, "Unable to prepare AudioTrack for decodeType=${packet.decodeType}")
+        val audioKey = AudioKey(packet.decodeType, packet.audioType)
+        val streamCategory = categories[audioKey]
+        if (streamCategory == null) {
+            logStore.info(
+                SOURCE,
+                "Audio payload ignored: route not assigned decodeType=${packet.decodeType} audioType=${packet.audioType}",
+            )
             return
         }
 
-        val playerSettings = settingsFor(activeStream)
+        val stream = tracks[audioKey] ?: prepareTrack(audioKey, streamCategory)
+        if (stream == null) {
+            logStore.error(
+                SOURCE,
+                "Unable to prepare AudioTrack for decodeType=${packet.decodeType} audioType=${packet.audioType}",
+            )
+            return
+        }
+
+        val playerSettings = settingsFor(streamCategory)
         applyEffects(stream, playerSettings)
-        val payload = applyGainIfNeeded(packet.payload, playerSettings.gainMultiplier)
+        val payload = applyGainIfNeeded(packet.payload, effectiveGainFor(audioKey, playerSettings))
         stream.track.write(payload, 0, payload.size)
     }
 
@@ -89,32 +127,102 @@ class AudioStreamManager(
             managed.track.release()
         }
         tracks.clear()
+        categories.clear()
+        protocolVolumeDirectives.clear()
         currentDeviceSettings = null
     }
 
     private fun handleCommand(
         command: Int,
-        decodeType: Int,
+        audioKey: AudioKey,
     ) {
-        logStore.info(SOURCE, "Audio command ${describeAudioCommand(command)} decodeType=$decodeType")
+        logStore.info(
+            SOURCE,
+            "Audio command ${describeAudioCommand(command)} decodeType=${audioKey.decodeType} audioType=${audioKey.audioType}",
+        )
         when (command) {
-            Cpc200Protocol.AudioCommand.OUTPUT_START,
-            Cpc200Protocol.AudioCommand.MEDIA_START,
-            -> startStream(StreamKey.MEDIA, decodeType)
+            Cpc200Protocol.AudioCommand.OUTPUT_START -> startOutputStream(audioKey)
+            Cpc200Protocol.AudioCommand.MEDIA_START -> startStream(audioKey, StreamKey.MEDIA)
 
-            Cpc200Protocol.AudioCommand.OUTPUT_STOP,
-            Cpc200Protocol.AudioCommand.MEDIA_STOP,
-            -> stopStream(StreamKey.MEDIA)
+            Cpc200Protocol.AudioCommand.OUTPUT_STOP -> stopOutputStream(audioKey)
+            Cpc200Protocol.AudioCommand.MEDIA_STOP -> stopStream(audioKey)
 
-            Cpc200Protocol.AudioCommand.NAVI_START -> startStream(StreamKey.NAVI, decodeType)
-            Cpc200Protocol.AudioCommand.NAVI_STOP -> stopStream(StreamKey.NAVI)
-            Cpc200Protocol.AudioCommand.SIRI_START -> startStream(StreamKey.SIRI, decodeType)
-            Cpc200Protocol.AudioCommand.SIRI_STOP -> stopStream(StreamKey.SIRI)
-            Cpc200Protocol.AudioCommand.PHONE_START -> startStream(StreamKey.PHONE, decodeType)
-            Cpc200Protocol.AudioCommand.PHONE_STOP -> stopStream(StreamKey.PHONE)
-            Cpc200Protocol.AudioCommand.ALERT_START -> startStream(StreamKey.ALERT, decodeType)
-            Cpc200Protocol.AudioCommand.ALERT_STOP -> stopStream(StreamKey.ALERT)
+            Cpc200Protocol.AudioCommand.NAVI_START -> startStream(audioKey, StreamKey.NAVI)
+            Cpc200Protocol.AudioCommand.NAVI_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.SIRI_START -> startStream(audioKey, StreamKey.SIRI)
+            Cpc200Protocol.AudioCommand.SIRI_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.PHONE_START -> startStream(audioKey, StreamKey.PHONE)
+            Cpc200Protocol.AudioCommand.PHONE_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.ALERT_START -> startStream(audioKey, StreamKey.ALERT)
+            Cpc200Protocol.AudioCommand.ALERT_STOP -> stopStream(audioKey)
         }
+    }
+
+    private fun startOutputStream(audioKey: AudioKey) {
+        val existingCategory = categories[audioKey]
+        if (existingCategory != null && existingCategory != StreamKey.MEDIA) {
+            logStore.info(
+                SOURCE,
+                "Audio outputStart keeps existing route=$existingCategory key=${audioKey.decodeType}/${audioKey.audioType}",
+            )
+            startStream(audioKey, existingCategory)
+            return
+        }
+        startStream(audioKey, StreamKey.MEDIA)
+    }
+
+    private fun handleVolumeDirective(
+        audioKey: AudioKey,
+        volume: Float,
+        durationSeconds: Float,
+    ) {
+        val durationMs = (durationSeconds.coerceAtLeast(0f) * 1_000f).roundToLong()
+        if (durationMs <= 0L) {
+            protocolVolumeDirectives.remove(audioKey)
+            logStore.info(
+                SOURCE,
+                "Audio volume envelope cleared key=${audioKey.decodeType}/${audioKey.audioType}",
+            )
+            return
+        }
+
+        val normalizedGain = volume.coerceAtLeast(0f)
+        protocolVolumeDirectives[audioKey] = VolumeDirective(
+            gain = normalizedGain,
+            expiresAtMs = System.currentTimeMillis() + durationMs,
+        )
+        logStore.info(
+            SOURCE,
+            "Audio volume envelope key=${audioKey.decodeType}/${audioKey.audioType} gain=${"%.2f".format(normalizedGain)} duration=${"%.2f".format(durationSeconds)}s",
+        )
+    }
+
+    private fun cleanupExpiredVolumeDirectives() {
+        if (protocolVolumeDirectives.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val iterator = protocolVolumeDirectives.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now >= entry.value.expiresAtMs) {
+                logStore.info(
+                    SOURCE,
+                    "Audio volume envelope expired key=${entry.key.decodeType}/${entry.key.audioType}",
+                )
+                iterator.remove()
+            }
+        }
+    }
+
+    private fun stopOutputStream(audioKey: AudioKey) {
+        val existingCategory = categories[audioKey]
+        if (existingCategory != null && existingCategory != StreamKey.MEDIA) {
+            logStore.info(
+                SOURCE,
+                "Audio outputStop ignored for active route=$existingCategory key=${audioKey.decodeType}/${audioKey.audioType}",
+            )
+            return
+        }
+        stopStream(audioKey)
     }
 
     private fun describeAudioCommand(command: Int): String = when (command) {
@@ -135,35 +243,40 @@ class AudioStreamManager(
     }
 
     private fun startStream(
+        audioKey: AudioKey,
         streamKey: StreamKey,
-        decodeType: Int,
     ) {
-        val managedTrack = tracks[streamKey] ?: prepareTrack(streamKey, decodeType) ?: return
-        activeStream = streamKey
+        categories[audioKey] = streamKey
+        val managedTrack = tracks[audioKey] ?: prepareTrack(audioKey, streamKey) ?: return
+        applyEffects(managedTrack, settingsFor(streamKey))
         managedTrack.track.play()
-        logStore.info(SOURCE, "Audio stream started: $streamKey (${managedTrack.format.sampleRate}Hz)")
+        logStore.info(
+            SOURCE,
+            "Audio stream started: $streamKey key=${audioKey.decodeType}/${audioKey.audioType} (${managedTrack.format.sampleRate}Hz)",
+        )
     }
 
-    private fun stopStream(streamKey: StreamKey) {
-        tracks.remove(streamKey)?.let { managed ->
+    private fun stopStream(audioKey: AudioKey) {
+        categories.remove(audioKey)
+        tracks.remove(audioKey)?.let { managed ->
             managed.track.pause()
             managed.track.flush()
             managed.equalizer?.release()
             managed.bassBoost?.release()
             managed.loudnessEnhancer?.release()
             managed.track.release()
-            logStore.info(SOURCE, "Audio stream stopped: $streamKey")
-        }
-        if (activeStream == streamKey) {
-            activeStream = StreamKey.MEDIA
+            logStore.info(
+                SOURCE,
+                "Audio stream stopped: key=${audioKey.decodeType}/${audioKey.audioType}",
+            )
         }
     }
 
     private fun prepareTrack(
+        audioKey: AudioKey,
         streamKey: StreamKey,
-        decodeType: Int,
     ): ManagedTrack? {
-        val format = decodeTypeToFormat(decodeType, streamKey) ?: return null
+        val format = decodeTypeToFormat(audioKey.decodeType, streamKey) ?: return null
         val minBuffer = AudioTrack.getMinBufferSize(
             format.sampleRate,
             format.channelMask,
@@ -199,19 +312,17 @@ class AudioStreamManager(
             loudnessEnhancer = createLoudnessEnhancer(audioTrack.audioSessionId),
         )
         applyEffects(managedTrack, settingsFor(streamKey))
-        return managedTrack.also { tracks[streamKey] = it }
+        return managedTrack.also { tracks[audioKey] = it }
     }
 
     private fun decodeTypeToFormat(
         decodeType: Int,
         streamKey: StreamKey,
     ): StreamFormat? {
-        val usage = when (streamKey) {
-            StreamKey.MEDIA -> AudioAttributes.USAGE_MEDIA
-            StreamKey.NAVI -> AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
-            StreamKey.SIRI -> AudioAttributes.USAGE_ASSISTANT
-            StreamKey.PHONE -> AudioAttributes.USAGE_VOICE_COMMUNICATION
-            StreamKey.ALERT -> AudioAttributes.USAGE_NOTIFICATION_EVENT
+        val usage = if (streamKey == StreamKey.PHONE) {
+            AudioAttributes.USAGE_VOICE_COMMUNICATION
+        } else {
+            AudioAttributes.USAGE_MEDIA
         }
 
         return when (decodeType) {
@@ -247,6 +358,14 @@ class AudioStreamManager(
             StreamKey.ALERT -> ProjectionAudioPlayerType.ALERT
         }
         return currentDeviceSettings?.playerSettings?.get(playerType) ?: ProjectionPlayerAudioSettings()
+    }
+
+    private fun effectiveGainFor(
+        audioKey: AudioKey,
+        settings: ProjectionPlayerAudioSettings,
+    ): Float {
+        val protocolGain = protocolVolumeDirectives[audioKey]?.gain ?: 1f
+        return (settings.gainMultiplier * protocolGain).coerceAtLeast(0f)
     }
 
     private fun createEqualizer(audioSessionId: Int): Equalizer? {
@@ -318,13 +437,14 @@ class AudioStreamManager(
         payload: ByteArray,
         gainMultiplier: Float,
     ): ByteArray {
-        if (gainMultiplier <= 1.001f) return payload
+        val effectiveGain = gainMultiplier.coerceAtLeast(0f)
+        if (effectiveGain in 0.999f..1.001f) return payload
 
         val amplified = payload.copyOf()
         var index = 0
         while (index + 1 < amplified.size) {
             val sample = ((amplified[index + 1].toInt() shl 8) or (amplified[index].toInt() and 0xFF)).toShort()
-            val boosted = (sample * gainMultiplier).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            val boosted = (sample * effectiveGain).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
             amplified[index] = boosted.toByte()
             amplified[index + 1] = (boosted shr 8).toByte()
             index += 2

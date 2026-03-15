@@ -62,11 +62,14 @@ data class ProjectionSessionConfig(
         private const val DEFAULT_STREAM_FPS = 60
         private const val DEFAULT_DPI = 160
         private const val SIZE_ALIGNMENT = 16
-        private const val DEFAULT_BOX_NAME = "Carlink"
+        private const val DEFAULT_BOX_NAME = "Carlink-0000"
 
-        fun fromContext(context: Context): ProjectionSessionConfig {
+        fun fromContext(
+            context: Context,
+            adapterName: String = DEFAULT_BOX_NAME,
+        ): ProjectionSessionConfig {
             val (displayWidth, displayHeight) = resolveLandscapeDisplaySize(context)
-            val boxName = DEFAULT_BOX_NAME
+            val boxName = adapterName
             return ProjectionSessionConfig(
                 androidWorkMode = false,
                 width = displayWidth,

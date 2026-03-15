@@ -11,15 +11,20 @@ import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
 import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
+import com.alexander.carplay.domain.usecase.LoadProjectionAdapterNameUseCase
+import com.alexander.carplay.domain.usecase.LoadProjectionAutoConnectUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionUiEventsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
 import com.alexander.carplay.domain.usecase.RefreshProjectionRuntimeSettingsUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
+import com.alexander.carplay.domain.usecase.SaveProjectionAdapterNameUseCase
+import com.alexander.carplay.domain.usecase.SaveProjectionAutoConnectUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
 import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
+import com.alexander.carplay.domain.usecase.SetProjectionVideoStreamEnabledUseCase
 import com.alexander.carplay.domain.usecase.StartReplaySessionUseCase
 import com.alexander.carplay.domain.usecase.StartProjectionServiceUseCase
 import com.alexander.carplay.domain.usecase.StartUsbSessionUseCase
@@ -38,6 +43,10 @@ class AppContainer(application: Application) {
     val observeProjectionUiEventsUseCase = ObserveProjectionUiEventsUseCase(sessionPort)
     val loadProjectionDeviceSettingsUseCase = LoadProjectionDeviceSettingsUseCase(settingsPort)
     val saveProjectionDeviceSettingsUseCase = SaveProjectionDeviceSettingsUseCase(settingsPort)
+    val loadProjectionAdapterNameUseCase = LoadProjectionAdapterNameUseCase(settingsPort)
+    val saveProjectionAdapterNameUseCase = SaveProjectionAdapterNameUseCase(settingsPort)
+    val loadProjectionAutoConnectUseCase = LoadProjectionAutoConnectUseCase(settingsPort)
+    val saveProjectionAutoConnectUseCase = SaveProjectionAutoConnectUseCase(settingsPort)
     val startProjectionServiceUseCase = StartProjectionServiceUseCase(sessionPort)
     val startUsbSessionUseCase = StartUsbSessionUseCase(sessionPort)
     val startReplaySessionUseCase = StartReplaySessionUseCase(sessionPort)
@@ -45,6 +54,7 @@ class AppContainer(application: Application) {
     val unbindProjectionUiUseCase = UnbindProjectionUiUseCase(sessionPort)
     val requestProjectionReconnectUseCase = RequestProjectionReconnectUseCase(sessionPort)
     val refreshProjectionRuntimeSettingsUseCase = RefreshProjectionRuntimeSettingsUseCase(sessionPort)
+    val setProjectionVideoStreamEnabledUseCase = SetProjectionVideoStreamEnabledUseCase(sessionPort)
     val selectProjectionDeviceUseCase = SelectProjectionDeviceUseCase(sessionPort)
     val cancelProjectionDeviceConnectionUseCase = CancelProjectionDeviceConnectionUseCase(sessionPort)
     val attachProjectionSurfaceUseCase = AttachProjectionSurfaceUseCase(sessionPort)

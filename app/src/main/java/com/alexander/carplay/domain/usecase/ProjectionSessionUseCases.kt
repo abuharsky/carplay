@@ -69,6 +69,12 @@ class RefreshProjectionRuntimeSettingsUseCase(
     operator fun invoke() = sessionPort.refreshRuntimeSettings()
 }
 
+class SetProjectionVideoStreamEnabledUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(enabled: Boolean) = sessionPort.setVideoStreamEnabled(enabled)
+}
+
 class SelectProjectionDeviceUseCase(
     private val sessionPort: ProjectionSessionPort,
 ) {

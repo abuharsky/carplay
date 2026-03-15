@@ -16,15 +16,20 @@ import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
 import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
+import com.alexander.carplay.domain.usecase.LoadProjectionAdapterNameUseCase
+import com.alexander.carplay.domain.usecase.LoadProjectionAutoConnectUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionUiEventsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
 import com.alexander.carplay.domain.usecase.RefreshProjectionRuntimeSettingsUseCase
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
+import com.alexander.carplay.domain.usecase.SaveProjectionAdapterNameUseCase
+import com.alexander.carplay.domain.usecase.SaveProjectionAutoConnectUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
 import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
+import com.alexander.carplay.domain.usecase.SetProjectionVideoStreamEnabledUseCase
 import com.alexander.carplay.domain.usecase.StartReplaySessionUseCase
 import com.alexander.carplay.domain.usecase.StartProjectionServiceUseCase
 import com.alexander.carplay.domain.usecase.StartUsbSessionUseCase
@@ -57,6 +62,7 @@ data class CarPlayDeviceUiState(
     val id: String,
     val title: String,
     val subtitle: String,
+    val isAvailable: Boolean,
     val isActive: Boolean,
     val isSelected: Boolean,
     val isConnecting: Boolean,
@@ -73,8 +79,13 @@ class CarPlayViewModel(
     private val unbindProjectionUiUseCase: UnbindProjectionUiUseCase,
     private val requestProjectionReconnectUseCase: RequestProjectionReconnectUseCase,
     private val refreshProjectionRuntimeSettingsUseCase: RefreshProjectionRuntimeSettingsUseCase,
+    private val setProjectionVideoStreamEnabledUseCase: SetProjectionVideoStreamEnabledUseCase,
     private val loadProjectionDeviceSettingsUseCase: LoadProjectionDeviceSettingsUseCase,
     private val saveProjectionDeviceSettingsUseCase: SaveProjectionDeviceSettingsUseCase,
+    private val loadProjectionAdapterNameUseCase: LoadProjectionAdapterNameUseCase,
+    private val saveProjectionAdapterNameUseCase: SaveProjectionAdapterNameUseCase,
+    private val loadProjectionAutoConnectUseCase: LoadProjectionAutoConnectUseCase,
+    private val saveProjectionAutoConnectUseCase: SaveProjectionAutoConnectUseCase,
     private val selectProjectionDeviceUseCase: SelectProjectionDeviceUseCase,
     private val cancelProjectionDeviceConnectionUseCase: CancelProjectionDeviceConnectionUseCase,
     private val attachProjectionSurfaceUseCase: AttachProjectionSurfaceUseCase,
@@ -110,9 +121,11 @@ class CarPlayViewModel(
     fun onBindUi() {
         startProjectionServiceUseCase()
         bindProjectionUiUseCase()
+        setProjectionVideoStreamEnabledUseCase(true)
     }
 
     fun onUnbindUi() {
+        setProjectionVideoStreamEnabledUseCase(false)
         detachProjectionSurfaceUseCase()
         unbindProjectionUiUseCase()
     }
@@ -153,6 +166,27 @@ class CarPlayViewModel(
 
     fun loadDeviceSettings(deviceId: String?): ProjectionDeviceSettings {
         return loadProjectionDeviceSettingsUseCase(deviceId)
+    }
+
+    fun loadAdapterName(): String {
+        return loadProjectionAdapterNameUseCase()
+    }
+
+    fun saveAdapterName(name: String) {
+        saveProjectionAdapterNameUseCase(name)
+    }
+
+    fun loadAutoConnectEnabled(): Boolean {
+        return loadProjectionAutoConnectUseCase()
+    }
+
+    fun saveAutoConnectEnabled(enabled: Boolean) {
+        saveProjectionAutoConnectUseCase(enabled)
+    }
+
+    fun disconnectAndDisableAutoConnect() {
+        saveProjectionAutoConnectUseCase(false)
+        cancelProjectionDeviceConnectionUseCase()
     }
 
     fun saveDeviceSettings(
@@ -242,12 +276,13 @@ class CarPlayViewModel(
 
     private fun ProjectionSessionSnapshot.overlayStatusMessage(): String {
         val knownDevicesAvailable = devices.isNotEmpty()
+        val manualSelectionRequired = devices.size > 1 && devices.none { it.isConnecting || it.isActive }
         val currentName = currentDeviceName?.takeIf { it.isNotBlank() }
 
         return when (protocolPhase) {
             ProjectionProtocolPhase.HOST_INIT -> "Подготовка адаптера"
-            ProjectionProtocolPhase.INIT_ECHO -> "Ожидание iPhone"
-            ProjectionProtocolPhase.PHONE_SEARCH -> "Поиск iPhone"
+            ProjectionProtocolPhase.INIT_ECHO -> if (manualSelectionRequired) "Выберите iPhone" else "Ожидание iPhone"
+            ProjectionProtocolPhase.PHONE_SEARCH -> if (manualSelectionRequired) "Выберите iPhone" else "Поиск iPhone"
             ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED -> "Связь с iPhone"
             ProjectionProtocolPhase.CARPLAY_SESSION_SETUP -> "Запуск CarPlay"
             ProjectionProtocolPhase.AIRPLAY_NEGOTIATING -> "Открытие CarPlay"
@@ -261,7 +296,7 @@ class CarPlayViewModel(
 
             ProjectionProtocolPhase.SESSION_ENDED -> "Перезапуск"
             ProjectionProtocolPhase.NEGOTIATION_FAILED -> "Повтор подключения"
-            ProjectionProtocolPhase.WAITING_RETRY -> "Поиск iPhone"
+            ProjectionProtocolPhase.WAITING_RETRY -> if (manualSelectionRequired) "Выберите iPhone" else "Поиск iPhone"
 
             ProjectionProtocolPhase.NONE -> when (state) {
                 ProjectionConnectionState.IDLE -> "Ожидание USB адаптера"
@@ -308,8 +343,9 @@ class CarPlayViewModel(
     private fun ProjectionDeviceSnapshot.toUiModel(): CarPlayDeviceUiState {
         val subtitle = when {
             isConnecting -> "Подключение..."
-            isActive -> "Доступно сейчас"
-            isSelected -> "Выбрано адаптером"
+            isActive -> "Подключено сейчас"
+            isAvailable -> "Доступно сейчас"
+            isSelected -> "Использовалось ранее"
             type != null -> type
             else -> "Ранее использовалось"
         }
@@ -318,6 +354,7 @@ class CarPlayViewModel(
             id = id,
             title = name,
             subtitle = subtitle,
+            isAvailable = isAvailable,
             isActive = isActive,
             isSelected = isSelected,
             isConnecting = isConnecting,
