@@ -29,7 +29,7 @@ class CarPlayActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
-        requestNotificationsIfNeeded()
+        requestRuntimePermissionsIfNeeded()
 
         setContent {
             CarPlayComposeTheme {
@@ -42,13 +42,26 @@ class CarPlayActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        hideSystemBars()
         viewModel.onStart()
         viewModel.onBindUi()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hideSystemBars()
     }
 
     override fun onStop() {
         super.onStop()
         viewModel.onUnbindUi()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            hideSystemBars()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -65,12 +78,21 @@ class CarPlayActivity : AppCompatActivity() {
         }
     }
 
-    private fun requestNotificationsIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            return
+    private fun requestRuntimePermissionsIfNeeded() {
+        val missingPermissions = buildList {
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                add(Manifest.permission.RECORD_AUDIO)
+            }
         }
-        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
+        if (missingPermissions.isNotEmpty()) {
+            requestPermissions(missingPermissions.toTypedArray(), 100)
+        }
     }
 
     private fun maybeStartReplayFromIntent(

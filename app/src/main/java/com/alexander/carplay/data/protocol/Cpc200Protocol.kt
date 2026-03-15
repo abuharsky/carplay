@@ -56,6 +56,8 @@ object Cpc200Protocol {
     }
 
     object Command {
+        const val START_RECORD_AUDIO = 1
+        const val STOP_RECORD_AUDIO = 2
         const val DISABLE_BLUETOOTH = 4
         const val REQUEST_HOST_UI = 3
         const val HIDE = 14
@@ -246,6 +248,22 @@ object Cpc200Protocol {
         MessageType.COMMAND,
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(commandId).array(),
     )
+
+    fun audioInput(
+        pcm: ShortArray,
+        decodeType: Int = AudioDecodeType.PCM_16_MONO,
+        volume: Float = 0f,
+        audioType: Int = 3,
+    ): ByteArray {
+        val audioPayload = ByteBuffer
+            .allocate(AUDIO_SUB_HEADER_SIZE + pcm.size * 2)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(decodeType)
+            .putFloat(volume)
+            .putInt(audioType)
+        pcm.forEach(audioPayload::putShort)
+        return wrapMessage(MessageType.AUDIO, audioPayload.array())
+    }
 
     fun selectDevice(macAddress: String): ByteArray = wrapMessage(
         MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS,
@@ -524,6 +542,8 @@ object Cpc200Protocol {
     }
 
     fun describeCommand(commandId: Int): String = when (commandId) {
+        Command.START_RECORD_AUDIO -> "startRecordAudio"
+        Command.STOP_RECORD_AUDIO -> "stopRecordAudio"
         Command.DISABLE_BLUETOOTH -> "disableBluetoothOrPhoneBtMacNotify"
         Command.REQUEST_HOST_UI -> "requestHostUi"
         Command.HIDE -> "hide"

@@ -32,9 +32,9 @@ class DongleFlowController(
 
         fun stopFrameRequests()
 
-        fun startAutoConnectLoop(reason: String)
+        fun requestAutoConnect(reason: String)
 
-        fun stopAutoConnectLoop()
+        fun clearAutoConnectPending()
 
         fun startBleAdvertising(reason: String)
 
@@ -87,7 +87,7 @@ class DongleFlowController(
         delegate.startReadLoop()
         buildInitMessages(config).forEach(delegate::queueMessage)
         delegate.startHeartbeat()
-        delegate.stopAutoConnectLoop()
+        delegate.clearAutoConnectPending()
         transitionTo(ProjectionProtocolPhase.HOST_INIT, "Host init sequence queued")
 
         delegate.updateState(
@@ -100,7 +100,7 @@ class DongleFlowController(
     fun onSessionClosed(reason: String) {
         firstVideoPacketSeen = false
         delegate.stopFrameRequests()
-        delegate.stopAutoConnectLoop()
+        delegate.clearAutoConnectPending()
         delegate.stopBleAdvertising()
         transitionTo(ProjectionProtocolPhase.NONE, "Session closed: $reason")
     }
@@ -112,15 +112,16 @@ class DongleFlowController(
     fun onDongleOpened() {
         transitionTo(ProjectionProtocolPhase.INIT_ECHO, "Adapter acknowledged Open")
         if (delegate.hasKnownDevices()) {
-            delegate.startAutoConnectLoop("adapter opened with known devices")
+            delegate.startBleAdvertising("bt bootstrap while auto-connect scans")
+            delegate.requestAutoConnect("adapter opened with known devices")
             delegate.updateState(
                 state = ProjectionConnectionState.CONNECTING,
                 protocolPhase = ProjectionProtocolPhase.INIT_ECHO,
-                message = "Adapter ready. Starting auto-connect scan",
+                message = "Adapter ready. Scanning and waiting for iPhone",
             )
-            logStore.info(SOURCE, "Opened -> startAutoConnect loop")
+            logStore.info(SOURCE, "Opened -> startBleAdv + startAutoConnect")
         } else {
-            delegate.stopAutoConnectLoop()
+            delegate.clearAutoConnectPending()
             delegate.startBleAdvertising("no paired devices known after init echo")
             delegate.updateState(
                 state = ProjectionConnectionState.WAITING_PHONE,
@@ -132,7 +133,7 @@ class DongleFlowController(
     }
 
     fun onPlugged(info: Cpc200Protocol.PluggedInfo) {
-        delegate.stopAutoConnectLoop()
+        delegate.clearAutoConnectPending()
         delegate.stopBleAdvertising()
         delegate.sendCommand(Cpc200Protocol.Command.REQUEST_KEY_FRAME)
         delegate.startFrameRequests()
@@ -149,7 +150,7 @@ class DongleFlowController(
     fun onPhase(phase: Int) {
         when (phase) {
             7 -> {
-                delegate.stopAutoConnectLoop()
+                delegate.clearAutoConnectPending()
                 delegate.stopBleAdvertising()
                 transitionTo(ProjectionProtocolPhase.AIRPLAY_NEGOTIATING, "Phase 7 negotiation started")
                 delegate.updateState(
@@ -160,7 +161,7 @@ class DongleFlowController(
             }
 
             8 -> {
-                delegate.stopAutoConnectLoop()
+                delegate.clearAutoConnectPending()
                 delegate.stopBleAdvertising()
                 transitionTo(ProjectionProtocolPhase.STREAMING_ACTIVE, "Phase 8 streaming active")
                 delegate.updateState(
@@ -202,7 +203,7 @@ class DongleFlowController(
     ) {
         if (firstVideoPacketSeen) return
         firstVideoPacketSeen = true
-        delegate.stopAutoConnectLoop()
+        delegate.clearAutoConnectPending()
         delegate.stopBleAdvertising()
         transitionTo(ProjectionProtocolPhase.STREAMING_ACTIVE, "First video frame received")
         delegate.updateState(
@@ -246,7 +247,7 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.DEVICE_FOUND -> {
-                delegate.stopAutoConnectLoop()
+                delegate.clearAutoConnectPending()
                 transitionTo(ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED, "Known device found")
                 delegate.updateState(
                     state = ProjectionConnectionState.CONNECTING,
@@ -268,7 +269,7 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.BT_CONNECTED -> {
-                delegate.stopAutoConnectLoop()
+                delegate.clearAutoConnectPending()
                 delegate.stopBleAdvertising()
                 transitionTo(ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED, "Bluetooth connected")
                 delegate.updateState(
@@ -329,17 +330,17 @@ class DongleFlowController(
     }
 
     private fun beginDiscovery(reason: String) {
+        delegate.startBleAdvertising(reason)
         if (delegate.hasKnownDevices()) {
-            delegate.startAutoConnectLoop(reason)
+            delegate.requestAutoConnect(reason)
         } else {
-            delegate.stopAutoConnectLoop()
-            delegate.startBleAdvertising(reason)
+            delegate.clearAutoConnectPending()
         }
     }
 
     private fun discoveryStatusMessage(): String {
         return if (delegate.hasKnownDevices()) {
-            "Rescanning for known iPhone"
+            "Rescanning and waiting for iPhone"
         } else {
             "BLE pairing mode active"
         }
@@ -373,9 +374,9 @@ class DongleFlowController(
         add(
             Cpc200Protocol.command(
                 if (config.useAdapterMic) {
-                    Cpc200Protocol.Command.USE_BOX_MIC
+                    Cpc200Protocol.Command.USE_BOX_I2S_MIC
                 } else {
-                    Cpc200Protocol.Command.USE_PHONE_MIC
+                    Cpc200Protocol.Command.USE_CAR_MIC
                 },
             ),
         )

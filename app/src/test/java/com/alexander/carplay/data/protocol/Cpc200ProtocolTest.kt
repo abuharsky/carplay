@@ -77,6 +77,8 @@ class Cpc200ProtocolTest {
 
     @Test
     fun `official command ids match firmware reference`() {
+        assertThat(Cpc200Protocol.Command.START_RECORD_AUDIO).isEqualTo(1)
+        assertThat(Cpc200Protocol.Command.STOP_RECORD_AUDIO).isEqualTo(2)
         assertThat(Cpc200Protocol.Command.USE_CAR_MIC).isEqualTo(7)
         assertThat(Cpc200Protocol.Command.USE_BOX_MIC).isEqualTo(8)
         assertThat(Cpc200Protocol.Command.REQUEST_KEY_FRAME).isEqualTo(12)
@@ -128,6 +130,21 @@ class Cpc200ProtocolTest {
 
         assertThat(header.type).isEqualTo(Cpc200Protocol.MessageType.SELECT_BT_DEVICE)
         assertThat(String(payload, Charsets.US_ASCII)).isEqualTo("D0:6B:78:53:8E:0C")
+    }
+
+    @Test
+    fun `audioInput serializes mono pcm payload like working plugin`() {
+        val message = Cpc200Protocol.audioInput(shortArrayOf(100, -200))
+        val header = Cpc200Protocol.parseHeader(message.copyOfRange(0, Cpc200Protocol.HEADER_SIZE))
+        val payload = message.copyOfRange(Cpc200Protocol.HEADER_SIZE, message.size)
+        val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+
+        assertThat(header.type).isEqualTo(Cpc200Protocol.MessageType.AUDIO)
+        assertThat(buffer.int).isEqualTo(Cpc200Protocol.AudioDecodeType.PCM_16_MONO)
+        assertThat(buffer.float).isEqualTo(0f)
+        assertThat(buffer.int).isEqualTo(3)
+        assertThat(buffer.short.toInt()).isEqualTo(100)
+        assertThat(buffer.short.toInt()).isEqualTo(-200)
     }
 
     @Test

@@ -6,6 +6,7 @@ import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.data.automotive.DoubleMediaServerPublisher
 import com.alexander.carplay.data.audio.AudioStreamManager
+import com.alexander.carplay.data.audio.MicrophoneInputManager
 import com.alexander.carplay.data.executor.CarPlayExecutors
 import com.alexander.carplay.data.input.TouchInputMapper
 import com.alexander.carplay.data.logging.DiagnosticLogStore
@@ -58,9 +59,7 @@ class DongleSessionManager(
         private const val RECONNECT_DELAY_MS = 2_000L
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
-        private const val HEARTBEAT_TIMEOUT_MS = 15_000L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
-        private const val AUTO_CONNECT_RESCAN_INTERVAL_MS = 3_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
         private const val INBOUND_ACTIVITY_LOG_GAP_MS = 10_000L
     }
@@ -70,6 +69,9 @@ class DongleSessionManager(
     private val usbTransport: UsbTransport = AndroidUsbTransport(appContext, logStore)
     private val renderer = H264Renderer(executors, logStore)
     private val audioStreamManager = AudioStreamManager(logStore)
+    private val microphoneInputManager = MicrophoneInputManager(logStore) { pcm ->
+        queueOutbound(Cpc200Protocol.audioInput(pcm))
+    }
     private val doubleMediaPublisher = DoubleMediaServerPublisher(appContext, logStore)
     private val touchInputMapper = TouchInputMapper()
     private val outboundQueue = LinkedBlockingQueue<ByteArray>()
@@ -107,12 +109,12 @@ class DongleSessionManager(
                 stopFrameRequestLoop()
             }
 
-            override fun startAutoConnectLoop(reason: String) {
-                this@DongleSessionManager.startAutoConnectLoop(reason)
+            override fun requestAutoConnect(reason: String) {
+                this@DongleSessionManager.requestAutoConnect(reason)
             }
 
-            override fun stopAutoConnectLoop() {
-                this@DongleSessionManager.stopAutoConnectLoop()
+            override fun clearAutoConnectPending() {
+                this@DongleSessionManager.clearAutoConnectPending()
             }
 
             override fun startBleAdvertising(reason: String) {
@@ -130,7 +132,7 @@ class DongleSessionManager(
             }
 
             override fun requestReconnect(reason: String) {
-                closeCurrentSession(reason, scheduleReconnect = true)
+                restartSessionNow(reason)
             }
 
             override fun requestHostUi() {
@@ -172,12 +174,11 @@ class DongleSessionManager(
     private var replayFrameDelayMs: Long = DEFAULT_REPLAY_FRAME_DELAY_MS
     private var heartbeatFuture: ScheduledFuture<*>? = null
     private var frameRequestFuture: ScheduledFuture<*>? = null
-    private var autoConnectFuture: ScheduledFuture<*>? = null
     private var bleAdvertisingActive = false
+    private var awaitingAutoConnectResult = false
     private var reconnectFuture: ScheduledFuture<*>? = null
     private var lastInboundActivityAtMs = 0L
     private var lastHeartbeatEchoAtMs = 0L
-    private var heartbeatTimeoutTriggered = false
     private var writeLoopStarted = false
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
@@ -235,6 +236,7 @@ class DongleSessionManager(
             started = false
             closeCurrentSession("service destroyed", scheduleReconnect = false)
             outboundQueue.clear()
+            microphoneInputManager.stop("service destroyed")
             audioStreamManager.release()
             renderer.release()
             updateState(
@@ -290,7 +292,7 @@ class DongleSessionManager(
     fun requestReconnect(reason: String = "manual") {
         executors.session.execute {
             if (!started) return@execute
-            closeCurrentSession(reason, scheduleReconnect = true)
+            restartSessionNow(reason)
         }
     }
 
@@ -500,12 +502,8 @@ class DongleSessionManager(
         val now = SystemClock.elapsedRealtime()
         lastInboundActivityAtMs = now
         lastHeartbeatEchoAtMs = now
-        heartbeatTimeoutTriggered = false
         heartbeatFuture = executors.scheduler.scheduleAtFixedRate(
-            {
-                queueOutbound(Cpc200Protocol.heartbeat())
-                checkHeartbeatTimeout()
-            },
+            { queueOutbound(Cpc200Protocol.heartbeat()) },
             HEARTBEAT_INTERVAL_SECONDS,
             HEARTBEAT_INTERVAL_SECONDS,
             TimeUnit.SECONDS,
@@ -516,30 +514,6 @@ class DongleSessionManager(
     private fun stopHeartbeatLoop() {
         heartbeatFuture?.cancel(false)
         heartbeatFuture = null
-        heartbeatTimeoutTriggered = false
-    }
-
-    private fun checkHeartbeatTimeout() {
-        if (sessionMode != SessionMode.USB) return
-        if (currentSession == null || shuttingDown || !started) return
-        if (heartbeatTimeoutTriggered) return
-        if (autoConnectFuture != null || bleAdvertisingActive) {
-            return
-        }
-        val currentPhase = _state.value.protocolPhase
-        if (currentPhase == ProjectionProtocolPhase.STREAMING_ACTIVE) {
-            return
-        }
-        val timeoutMs = HEARTBEAT_TIMEOUT_MS
-        val silenceMs = SystemClock.elapsedRealtime() - lastInboundActivityAtMs
-        if (silenceMs < timeoutMs) return
-
-        heartbeatTimeoutTriggered = true
-        logStore.info(
-            SOURCE,
-            "Heartbeat timeout after ${silenceMs}ms in phase=${currentPhase.name} (threshold=${timeoutMs}ms); reconnecting USB session",
-        )
-        closeCurrentSession("heartbeat timeout", scheduleReconnect = true)
     }
 
     private fun startFrameRequestLoop() {
@@ -558,34 +532,25 @@ class DongleSessionManager(
         frameRequestFuture = null
     }
 
-    private fun startAutoConnectLoop(reason: String) {
+    private fun requestAutoConnect(reason: String) {
         if (currentSession == null || !started || shuttingDown) return
-        if (autoConnectFuture != null) return
         emitAutoConnectRequest()
-
-        autoConnectFuture = executors.scheduler.scheduleAtFixedRate(
-            { emitAutoConnectRequest() },
-            AUTO_CONNECT_RESCAN_INTERVAL_MS,
-            AUTO_CONNECT_RESCAN_INTERVAL_MS,
-            TimeUnit.MILLISECONDS,
-        )
+        awaitingAutoConnectResult = true
         logStore.info(
             SOURCE,
-            "Auto-connect rescan loop started (${AUTO_CONNECT_RESCAN_INTERVAL_MS}ms): $reason",
+            "Auto-connect requested: $reason",
         )
     }
 
-    private fun stopAutoConnectLoop() {
-        val future = autoConnectFuture ?: return
-        future.cancel(false)
-        autoConnectFuture = null
-        logStore.info(SOURCE, "Auto-connect rescan loop stopped")
+    private fun clearAutoConnectPending() {
+        if (!awaitingAutoConnectResult) return
+        awaitingAutoConnectResult = false
+        logStore.info(SOURCE, "Auto-connect pending cleared")
     }
 
     private fun startBleAdvertising(reason: String) {
         if (currentSession == null || !started || shuttingDown) return
         if (bleAdvertisingActive) return
-        stopAutoConnectLoop()
         bleAdvertisingActive = true
         queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.START_BLE_ADV))
         logStore.info(SOURCE, "BLE advertising enabled: $reason")
@@ -617,11 +582,12 @@ class DongleSessionManager(
         pendingDeviceSelectionSent = false
         knownDevices.clear()
         outboundQueue.clear()
-        stopAutoConnectLoop()
+        clearAutoConnectPending()
         bleAdvertisingActive = false
+        awaitingAutoConnectResult = false
         lastInboundActivityAtMs = 0L
         lastHeartbeatEchoAtMs = 0L
-        heartbeatTimeoutTriggered = false
+        microphoneInputManager.stop("projection runtime reset: $reason")
         audioStreamManager.release()
         audioStreamManager.updateDeviceSettings(null)
         renderer.hardReset("projection runtime reset: $reason")
@@ -674,6 +640,7 @@ class DongleSessionManager(
 
     private fun applyRuntimeDeviceSettings() {
         val settings = settingsStore.getSettings(resolveCurrentDeviceId())
+        microphoneInputManager.updateGain(settings.micSettings.gainMultiplier)
         audioStreamManager.updateDeviceSettings(settings)
     }
 
@@ -1102,6 +1069,16 @@ class DongleSessionManager(
                     currentPeerBluetoothDeviceId = null
                 }
                 logStore.info(SOURCE, "Adapter command: ${Cpc200Protocol.describeCommand(command)}")
+                when (command) {
+                    Cpc200Protocol.Command.START_RECORD_AUDIO -> {
+                        applyRuntimeDeviceSettings()
+                        microphoneInputManager.start()
+                    }
+
+                    Cpc200Protocol.Command.STOP_RECORD_AUDIO -> {
+                        microphoneInputManager.stop("adapter stopRecordAudio")
+                    }
+                }
                 if (command == Cpc200Protocol.Command.DISABLE_BLUETOOTH && envelope.extraPayload.isNotEmpty()) {
                     Cpc200Protocol.parsePhoneBluetoothMac(safePayload)?.let { phoneBtMac ->
                         logStore.info(SOURCE, "Phone Bluetooth MAC: $phoneBtMac")
@@ -1243,6 +1220,17 @@ class DongleSessionManager(
         }
     }
 
+    private fun restartSessionNow(reason: String) {
+        val restartMode = sessionMode
+        val replayPath = replayCapturePath
+        closeCurrentSession(reason, scheduleReconnect = false)
+        if (!started || shuttingDown) return
+        when (restartMode) {
+            SessionMode.USB -> connectOrRequestPermission(reason)
+            SessionMode.REPLAY -> replayPath?.let(::openReplaySession)
+        }
+    }
+
     private fun queueOutbound(message: ByteArray) {
         if (!started || shuttingDown) return
         logOutboundMessage(message)
@@ -1253,7 +1241,7 @@ class DongleSessionManager(
         try {
             if (message.size < Cpc200Protocol.HEADER_SIZE) return
             val header = Cpc200Protocol.parseHeader(message.copyOfRange(0, Cpc200Protocol.HEADER_SIZE))
-            if (header.type == Cpc200Protocol.MessageType.MULTI_TOUCH) return
+            if (header.type == Cpc200Protocol.MessageType.MULTI_TOUCH || header.type == Cpc200Protocol.MessageType.AUDIO) return
             val payload = message.copyOfRange(Cpc200Protocol.HEADER_SIZE, message.size)
             logStore.info(SOURCE, "SEND ${describeOutboundMessage(header.type, payload)}")
         } catch (_: Throwable) {

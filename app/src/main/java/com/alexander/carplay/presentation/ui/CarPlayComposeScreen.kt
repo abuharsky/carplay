@@ -25,8 +25,6 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,7 +33,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
@@ -78,6 +75,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -405,8 +403,7 @@ private fun ConnectionOverlay(
                         Color(0xCE070B12),
                     ),
                 ),
-            )
-            .padding(WindowInsets.safeDrawing.asPaddingValues()),
+            ),
     ) {
         val logoTopOffset = maxHeight * 0.3f
         val overlayBottomOffset = maxHeight * 0.08f
@@ -424,6 +421,8 @@ private fun ConnectionOverlay(
                 style = MaterialTheme.typography.displayLarge.copy(
                     color = Color.White,
                     fontWeight = FontWeight.Medium,
+                    fontSize = MaterialTheme.typography.displayLarge.fontSize * 2,
+                    lineHeight = 96.sp,
                 ),
             )
         }
@@ -432,14 +431,14 @@ private fun ConnectionOverlay(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .wrapContentWidth()
-                .widthIn(max = 520.dp)
+                .widthIn(max = 676.dp)
                 .padding(start = 28.dp, end = 28.dp, bottom = overlayBottomOffset),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (hasDevices) {
                 DeviceSelectionField(
-                    modifier = Modifier.widthIn(min = 250.dp, max = 420.dp),
+                    modifier = Modifier.widthIn(min = 325.dp, max = 546.dp),
                     devices = devices,
                     selectedDevice = selectedDevice,
                     isExpanded = isSelectorExpanded,
@@ -450,7 +449,7 @@ private fun ConnectionOverlay(
                 )
             } else {
                 SearchStatusLine(
-                    modifier = Modifier.widthIn(min = 250.dp, max = 420.dp),
+                    modifier = Modifier.widthIn(min = 325.dp, max = 546.dp),
                     status = if (uiState.statusMessage.isBlank()) {
                         stringResource(id = R.string.overlay_no_device_title)
                     } else {
@@ -477,7 +476,7 @@ private fun SearchStatusLine(
     status: String,
 ) {
     Surface(
-        modifier = modifier.height(74.dp),
+        modifier = modifier.height(96.dp),
         color = Color.Transparent,
         contentColor = Color.White,
     ) {
@@ -488,7 +487,10 @@ private fun SearchStatusLine(
             Text(
                 text = status,
                 color = Color.White.copy(alpha = 0.46f),
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize * 1.3f,
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -513,7 +515,7 @@ private fun DeviceSelectionField(
     Box(modifier = modifier) {
         Surface(
             modifier = Modifier
-                .height(74.dp)
+                .height(96.dp)
                 .fillMaxWidth()
                 .clickable(
                     enabled = devices.isNotEmpty(),
@@ -530,9 +532,9 @@ private fun DeviceSelectionField(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 22.dp),
+                    .padding(horizontal = 28.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 ActiveStateDot(isActive = selectedDevice?.isActive == true)
 
@@ -544,7 +546,10 @@ private fun DeviceSelectionField(
                         Text(
                             text = fallbackStatus,
                             color = Color.White.copy(alpha = 0.84f),
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = MaterialTheme.typography.titleLarge.fontSize * 1.3f,
+                            ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -552,14 +557,20 @@ private fun DeviceSelectionField(
                         Text(
                             text = selectedDevice?.title ?: stringResource(id = R.string.overlay_choose_device),
                             color = Color.White,
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = MaterialTheme.typography.headlineSmall.fontSize * 1.3f,
+                            ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
                             text = selectedDevice?.subtitle ?: fallbackStatus,
                             color = Color.White.copy(alpha = 0.68f),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Medium,
+                                fontSize = MaterialTheme.typography.titleMedium.fontSize * 1.3f,
+                            ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -568,7 +579,7 @@ private fun DeviceSelectionField(
 
                 if (selectedDevice?.isConnecting == true) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(24.dp),
                         color = Color.White,
                         strokeWidth = 2.dp,
                     )
@@ -576,7 +587,7 @@ private fun DeviceSelectionField(
                     Image(
                         painter = painterResource(id = R.drawable.ic_overlay_chevron_down),
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             }
@@ -586,7 +597,7 @@ private fun DeviceSelectionField(
             expanded = isExpanded && devices.isNotEmpty(),
             onDismissRequest = onDismiss,
             modifier = Modifier
-                .widthIn(min = 250.dp, max = 420.dp)
+                .widthIn(min = 325.dp, max = 546.dp)
                 .background(Color(0xF4131A28), RoundedCornerShape(24.dp)),
         ) {
             devices.forEach { device ->
@@ -602,19 +613,24 @@ private fun DeviceSelectionField(
                                 Text(
                                     text = device.title,
                                     color = Color.White,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = MaterialTheme.typography.titleLarge.fontSize * 1.3f,
+                                    ),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = device.subtitle,
                                     color = Color.White.copy(alpha = 0.64f),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontSize = MaterialTheme.typography.titleSmall.fontSize * 1.3f,
+                                    ),
                                 )
                             }
                             if (device.isConnecting) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(21.dp),
                                     color = Color.White,
                                     strokeWidth = 2.dp,
                                 )
@@ -622,7 +638,7 @@ private fun DeviceSelectionField(
                         }
                     },
                     onClick = { onSelect(device) },
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
                 )
             }
         }
@@ -635,7 +651,7 @@ private fun ActiveStateDot(
 ) {
     Box(
         modifier = Modifier
-            .size(12.dp)
+            .size(14.dp)
             .clip(CircleShape)
             .background(if (isActive) Color(0xFF46D189) else Color.White.copy(alpha = 0.14f))
             .border(1.dp, Color.White.copy(alpha = if (isActive) 0.16f else 0.06f), CircleShape),
