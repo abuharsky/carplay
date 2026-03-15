@@ -2,6 +2,7 @@ package com.alexander.carplay.domain.model
 
 enum class ProjectionConnectionState {
     IDLE,
+    WAITING_VEHICLE,
     SEARCHING,
     WAITING_PERMISSION,
     CONNECTING,
@@ -10,4 +11,3 @@ enum class ProjectionConnectionState {
     STREAMING,
     ERROR,
 }
-

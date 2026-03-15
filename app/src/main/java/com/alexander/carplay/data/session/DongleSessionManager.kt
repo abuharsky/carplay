@@ -2,8 +2,12 @@ package com.alexander.carplay.data.session
 
 import android.content.Context
 import android.hardware.usb.UsbDevice
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.Surface
+import com.alexander.carplay.data.automotive.AutomotivePowerMonitor
+import com.alexander.carplay.data.automotive.AutomotivePowerPolicy
+import com.alexander.carplay.data.automotive.AutomotivePowerSnapshot
 import com.alexander.carplay.data.automotive.DoubleMediaServerPublisher
 import com.alexander.carplay.data.audio.AudioStreamManager
 import com.alexander.carplay.data.audio.MicrophoneInputManager
@@ -28,7 +32,6 @@ import com.alexander.carplay.domain.model.ProjectionProtocolPhase
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSettingsPort
-import android.os.SystemClock
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -57,6 +60,7 @@ class DongleSessionManager(
         private const val READ_TIMEOUT_MS = 1_000
         private const val WRITE_TIMEOUT_MS = 1_000
         private const val RECONNECT_DELAY_MS = 2_000L
+        private const val MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS = 120_000L
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
@@ -73,6 +77,11 @@ class DongleSessionManager(
         queueOutbound(Cpc200Protocol.audioInput(pcm))
     }
     private val doubleMediaPublisher = DoubleMediaServerPublisher(appContext, logStore)
+    private val automotivePowerMonitor = AutomotivePowerMonitor(logStore) { snapshot, reason ->
+        executors.session.execute {
+            handleAutomotivePowerChanged(snapshot, reason)
+        }
+    }
     private val touchInputMapper = TouchInputMapper()
     private val outboundQueue = LinkedBlockingQueue<ByteArray>()
     private val knownDevices = linkedMapOf<String, DongleKnownDevice>()
@@ -180,9 +189,18 @@ class DongleSessionManager(
     private var lastInboundActivityAtMs = 0L
     private var lastHeartbeatEchoAtMs = 0L
     private var writeLoopStarted = false
+    private var automotivePowerSnapshot = AutomotivePowerSnapshot()
+    private var vehicleActive = true
+    private var manualVehicleGateBypassUntilMs = 0L
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val events: SharedFlow<ProjectionUiEvent> = _events.asSharedFlow()
+
+    init {
+        automotivePowerMonitor.start()
+        automotivePowerSnapshot = automotivePowerMonitor.currentSnapshot()
+        vehicleActive = AutomotivePowerPolicy.isVehicleActive(automotivePowerSnapshot)
+    }
 
     fun start() {
         startUsb()
@@ -208,6 +226,7 @@ class DongleSessionManager(
     fun startUsb() {
         executors.session.execute {
             if (shuttingDown) return@execute
+            armManualVehicleGateBypass("manual start")
             sessionMode = SessionMode.USB
             replayCapturePath = null
             if (currentSession != null && currentSession?.isReplay == true) {
@@ -235,6 +254,7 @@ class DongleSessionManager(
             shuttingDown = true
             started = false
             closeCurrentSession("service destroyed", scheduleReconnect = false)
+            automotivePowerMonitor.stop()
             outboundQueue.clear()
             microphoneInputManager.stop("service destroyed")
             audioStreamManager.release()
@@ -292,6 +312,7 @@ class DongleSessionManager(
     fun requestReconnect(reason: String = "manual") {
         executors.session.execute {
             if (!started) return@execute
+            armManualVehicleGateBypass(reason)
             restartSessionNow(reason)
         }
     }
@@ -305,6 +326,7 @@ class DongleSessionManager(
 
     fun selectDevice(deviceId: String) {
         executors.session.execute {
+            armManualVehicleGateBypass("manual device selection")
             val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(deviceId).ifBlank { return@execute }
             currentSelectedDeviceId = normalizedId
             pendingConnectionDeviceId = normalizedId
@@ -313,6 +335,11 @@ class DongleSessionManager(
 
             if (!started) {
                 startUsbInternal("manual device selection")
+            }
+
+            if (!isVehicleGateOpen()) {
+                updateWaitingForVehicleState("manual device selection")
+                return@execute
             }
 
             sendExplicitDeviceSelectionIfPossible()
@@ -340,6 +367,9 @@ class DongleSessionManager(
                 },
                 phoneDescription = null,
             )
+            if (!isVehicleGateOpen()) {
+                updateWaitingForVehicleState("cancel device connection")
+            }
         }
     }
 
@@ -368,9 +398,21 @@ class DongleSessionManager(
         executors.session.execute {
             flowController.onSurfaceDetached()
             updateState(
-                state = if (currentSession == null) ProjectionConnectionState.SEARCHING else _state.value.state,
+                state = if (currentSession == null) {
+                    if (isVehicleGateOpen()) {
+                        ProjectionConnectionState.SEARCHING
+                    } else {
+                        ProjectionConnectionState.WAITING_VEHICLE
+                    }
+                } else {
+                    _state.value.state
+                },
                 message = if (currentSession == null) {
-                    "Adapter not connected"
+                    if (isVehicleGateOpen()) {
+                        "Adapter not connected"
+                    } else {
+                        buildVehicleWaitMessage()
+                    }
                 } else {
                     "Video paused while activity is in background"
                 },
@@ -395,15 +437,86 @@ class DongleSessionManager(
         }
     }
 
+    private fun handleAutomotivePowerChanged(
+        snapshot: AutomotivePowerSnapshot,
+        reason: String,
+    ) {
+        val gateWasOpen = isVehicleGateOpen()
+        automotivePowerSnapshot = snapshot
+        vehicleActive = AutomotivePowerPolicy.isVehicleActive(snapshot)
+        val gateIsOpen = isVehicleGateOpen()
+
+        if (sessionMode != SessionMode.USB || shuttingDown) {
+            return
+        }
+
+        if (gateIsOpen == gateWasOpen) {
+            if (!gateIsOpen && started && currentSession == null) {
+                updateWaitingForVehicleState(reason)
+            }
+            return
+        }
+
+        logStore.info(
+            SOURCE,
+            "Vehicle gate ${if (gateIsOpen) "opened" else "closed"}: $reason | ${AutomotivePowerPolicy.describeSnapshot(snapshot)}",
+        )
+
+        if (!started) return
+
+        if (!gateIsOpen) {
+            if (currentSession != null) {
+                closeCurrentSession("vehicle inactive: $reason", scheduleReconnect = false)
+            }
+            updateWaitingForVehicleState(reason)
+            return
+        }
+
+        if (currentSession == null) {
+            connectOrRequestPermission("vehicle active: $reason")
+        }
+    }
+
+    private fun updateWaitingForVehicleState(reason: String) {
+        cancelReconnect()
+        updateState(
+            state = ProjectionConnectionState.WAITING_VEHICLE,
+            message = buildVehicleWaitMessage(),
+            adapterDescription = null,
+            phoneDescription = null,
+            streamDescription = null,
+            videoWidth = null,
+            videoHeight = null,
+            lastError = null,
+        )
+        logStore.info(
+            SOURCE,
+            "Waiting for vehicle power before USB session: $reason | ${AutomotivePowerPolicy.describeSnapshot(automotivePowerSnapshot)}",
+        )
+    }
+
+    private fun buildVehicleWaitMessage(): String {
+        val accState = AutomotivePowerPolicy.describeAccState(automotivePowerSnapshot.accState)
+        return if (automotivePowerSnapshot.accState != null) {
+            "Waiting for vehicle ignition ($accState)"
+        } else {
+            "Waiting for vehicle power"
+        }
+    }
+
     private fun startUsbInternal(reason: String) {
         started = true
         sessionMode = SessionMode.USB
         sessionConfig = buildSessionConfig()
+        ensureWriteLoop()
+        if (!isVehicleGateOpen()) {
+            updateWaitingForVehicleState(reason)
+            return
+        }
         updateState(
             state = ProjectionConnectionState.SEARCHING,
             message = "Scanning for USB adapter",
         )
-        ensureWriteLoop()
         connectOrRequestPermission(reason)
     }
 
@@ -422,6 +535,10 @@ class DongleSessionManager(
 
     private fun connectOrRequestPermission(reason: String) {
         if (sessionMode != SessionMode.USB || !started || shuttingDown) return
+        if (!isVehicleGateOpen()) {
+            updateWaitingForVehicleState(reason)
+            return
+        }
         if (currentSession != null) return
 
         val device = usbTransport.findKnownDevice()
@@ -1292,6 +1409,10 @@ class DongleSessionManager(
         reason: String,
         delayMs: Long,
     ) {
+        if (sessionMode == SessionMode.USB && !isVehicleGateOpen()) {
+            updateWaitingForVehicleState("reconnect blocked: $reason")
+            return
+        }
         cancelReconnect()
         reconnectFuture = executors.scheduler.schedule(
             {
@@ -1311,6 +1432,32 @@ class DongleSessionManager(
     private fun cancelReconnect() {
         reconnectFuture?.cancel(false)
         reconnectFuture = null
+    }
+
+    private fun armManualVehicleGateBypass(reason: String) {
+        manualVehicleGateBypassUntilMs = SystemClock.elapsedRealtime() + MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS
+        logStore.info(
+            SOURCE,
+            "Manual vehicle-gate bypass armed for ${MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS}ms: $reason",
+        )
+    }
+
+    private fun isVehicleGateOpen(): Boolean {
+        return vehicleActive || isManualVehicleGateBypassActive()
+    }
+
+    private fun isManualVehicleGateBypassActive(): Boolean {
+        val untilMs = manualVehicleGateBypassUntilMs
+        if (untilMs <= 0L) return false
+
+        val now = SystemClock.elapsedRealtime()
+        if (now <= untilMs) {
+            return true
+        }
+
+        manualVehicleGateBypassUntilMs = 0L
+        logStore.info(SOURCE, "Manual vehicle-gate bypass expired")
+        return false
     }
 
     private fun updateState(

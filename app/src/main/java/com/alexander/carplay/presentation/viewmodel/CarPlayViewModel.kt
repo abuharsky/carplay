@@ -170,6 +170,7 @@ class CarPlayViewModel(
     private fun ProjectionSessionSnapshot.toUiState(logs: List<DiagnosticLogEntry>): CarPlayUiState {
         val stateLabel = when (state) {
             ProjectionConnectionState.IDLE -> "IDLE"
+            ProjectionConnectionState.WAITING_VEHICLE -> "WAITING_VEHICLE"
             ProjectionConnectionState.SEARCHING -> "SEARCHING"
             ProjectionConnectionState.WAITING_PERMISSION -> "WAITING_PERMISSION"
             ProjectionConnectionState.CONNECTING -> "CONNECTING"
@@ -220,6 +221,7 @@ class CarPlayViewModel(
             protocolPhaseTitle = protocolPhase.takeIf { it != ProjectionProtocolPhase.NONE }?.overlayTitle(),
             overlayColorRes = when (state) {
                 ProjectionConnectionState.IDLE -> R.color.status_idle
+                ProjectionConnectionState.WAITING_VEHICLE -> R.color.status_idle
                 ProjectionConnectionState.SEARCHING -> R.color.status_searching
                 ProjectionConnectionState.WAITING_PERMISSION -> R.color.status_searching
                 ProjectionConnectionState.CONNECTING -> R.color.status_connecting
@@ -243,59 +245,47 @@ class CarPlayViewModel(
         val currentName = currentDeviceName?.takeIf { it.isNotBlank() }
 
         return when (protocolPhase) {
-            ProjectionProtocolPhase.HOST_INIT -> "Запускаем адаптер"
-            ProjectionProtocolPhase.INIT_ECHO -> {
-                if (knownDevicesAvailable) {
-                    "Ищем iPhone"
-                } else {
-                    "Ждем iPhone рядом"
-                }
-            }
-
-            ProjectionProtocolPhase.PHONE_SEARCH -> "Ищем iPhone"
-            ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED -> "Подключаем iPhone"
-            ProjectionProtocolPhase.CARPLAY_SESSION_SETUP -> "Запускаем CarPlay"
-            ProjectionProtocolPhase.AIRPLAY_NEGOTIATING -> "Открываем CarPlay"
+            ProjectionProtocolPhase.HOST_INIT -> "Подготовка адаптера"
+            ProjectionProtocolPhase.INIT_ECHO -> "Ожидание iPhone"
+            ProjectionProtocolPhase.PHONE_SEARCH -> "Поиск iPhone"
+            ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED -> "Связь с iPhone"
+            ProjectionProtocolPhase.CARPLAY_SESSION_SETUP -> "Запуск CarPlay"
+            ProjectionProtocolPhase.AIRPLAY_NEGOTIATING -> "Открытие CarPlay"
             ProjectionProtocolPhase.STREAMING_ACTIVE -> {
                 if (surfaceAttached) {
-                    "CarPlay работает"
+                    "CarPlay активен"
                 } else {
                     "CarPlay готов"
                 }
             }
 
-            ProjectionProtocolPhase.SESSION_ENDED -> "Переподключаем"
-            ProjectionProtocolPhase.NEGOTIATION_FAILED -> "Повторяем подключение"
-            ProjectionProtocolPhase.WAITING_RETRY -> {
-                if (knownDevicesAvailable) {
-                    "Ищем снова"
-                } else {
-                    "Ждем iPhone рядом"
-                }
-            }
+            ProjectionProtocolPhase.SESSION_ENDED -> "Перезапуск"
+            ProjectionProtocolPhase.NEGOTIATION_FAILED -> "Повтор подключения"
+            ProjectionProtocolPhase.WAITING_RETRY -> "Поиск iPhone"
 
             ProjectionProtocolPhase.NONE -> when (state) {
-                ProjectionConnectionState.IDLE -> "Готово"
-                ProjectionConnectionState.SEARCHING -> "Ищем адаптер"
-                ProjectionConnectionState.WAITING_PERMISSION -> "Ждем доступ USB"
+                ProjectionConnectionState.IDLE -> "Ожидание USB адаптера"
+                ProjectionConnectionState.WAITING_VEHICLE -> "Ожидание USB адаптера"
+                ProjectionConnectionState.SEARCHING -> "Ожидание USB адаптера"
+                ProjectionConnectionState.WAITING_PERMISSION -> "Доступ к USB"
                 ProjectionConnectionState.CONNECTING -> {
                     when {
-                        currentName != null -> "Подключаем $currentName"
-                        knownDevicesAvailable -> "Подключаем iPhone"
-                        else -> "Подключаемся"
+                        currentName != null -> "Подключение: $currentName"
+                        knownDevicesAvailable -> "Подключение iPhone"
+                        else -> "Подключение адаптера"
                     }
                 }
 
-                ProjectionConnectionState.INIT -> "Готовим запуск"
+                ProjectionConnectionState.INIT -> "Подготовка адаптера"
                 ProjectionConnectionState.WAITING_PHONE -> {
                     if (knownDevicesAvailable) {
                         "Выберите iPhone"
                     } else {
-                        "Ждем iPhone рядом"
+                        "Ожидание iPhone"
                     }
                 }
 
-                ProjectionConnectionState.STREAMING -> "CarPlay работает"
+                ProjectionConnectionState.STREAMING -> "CarPlay активен"
                 ProjectionConnectionState.ERROR -> "Переподключаем"
             }
         }
