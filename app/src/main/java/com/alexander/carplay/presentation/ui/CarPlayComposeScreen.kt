@@ -29,12 +29,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
@@ -71,7 +68,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -82,8 +78,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -205,7 +199,6 @@ fun CarPlayRoute(
                         else -> viewModel.onConnectClicked()
                     }
                 },
-                onReplayClick = { viewModel.onReplayClicked() },
                 connectActionEnabled = connectActionEnabled,
                 showStopAction = shouldShowStop,
             )
@@ -301,7 +294,7 @@ private fun ProjectionTextureSurface(
                 keepScreenOn = true
                 textureViewRef = this
 
-                fun attachSurface(surfaceTexture: SurfaceTexture) {
+                fun attachSurface() {
                     bindSurfaceIfPossible(this)
                 }
 
@@ -311,7 +304,7 @@ private fun ProjectionTextureSurface(
                         width: Int,
                         height: Int,
                     ) {
-                        attachSurface(surface)
+                        attachSurface()
                     }
 
                     override fun onSurfaceTextureSizeChanged(
@@ -342,7 +335,7 @@ private fun ProjectionTextureSurface(
                 }
 
                 if (isAvailable) {
-                    surfaceTexture?.let(::attachSurface)
+                    attachSurface()
                 }
             }
         },
@@ -388,7 +381,6 @@ private fun ConnectionOverlay(
     onSelectorDismiss: () -> Unit,
     onDeviceSelected: (CarPlayDeviceUiState) -> Unit,
     onActionClick: () -> Unit,
-    onReplayClick: () -> Unit,
     connectActionEnabled: Boolean,
     showStopAction: Boolean,
 ) {
@@ -708,81 +700,6 @@ private fun OverlayActionButton(
 }
 
 @Composable
-private fun MinimalDiagnosticsButton(
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Surface(
-        modifier = modifier
-            .size(44.dp)
-            .clickable(onClick = onClick),
-        color = Color(0x660B111C),
-        shape = CircleShape,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Image(
-                painter = painterResource(id = R.drawable.ic_overlay_diagnostics),
-                contentDescription = stringResource(id = R.string.logs_title),
-                modifier = Modifier.size(18.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun DiagnosticsDialog(
-    diagnosticsText: String,
-    onDismiss: () -> Unit,
-) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.72f)
-                .padding(horizontal = 20.dp, vertical = 28.dp),
-            shape = RoundedCornerShape(28.dp),
-            color = Color(0xF6131822),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp),
-            ) {
-                Text(
-                    text = stringResource(id = R.string.logs_title),
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = Color.White,
-                )
-                Spacer(modifier = Modifier.height(14.dp))
-                Surface(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(22.dp),
-                    color = Color.White.copy(alpha = 0.04f),
-                ) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                    ) {
-                        item {
-                            Text(
-                                text = diagnosticsText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.82f),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun ProjectionSettingsScreen(
     deviceId: String?,
     deviceName: String?,
@@ -806,7 +723,12 @@ private fun ProjectionSettingsScreen(
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize(),
     ) {
-        val eqEditorHeight = (maxHeight - 156.dp).coerceAtLeast(360.dp)
+        val contentHeight = (maxHeight - 124.dp).coerceAtLeast(420.dp)
+        val playerCardWidth = (maxWidth * 0.30f).coerceIn(420.dp, 540.dp)
+        val eqCardWidth = (maxWidth * 0.46f).coerceIn(780.dp, 980.dp)
+        val micCardWidth = (maxWidth * 0.24f).coerceIn(320.dp, 420.dp)
+        val diagnosticsCardWidth = (maxWidth * 0.30f).coerceIn(360.dp, 520.dp)
+        val horizontalScrollState = rememberScrollState()
 
         Surface(
             modifier = Modifier
@@ -831,72 +753,136 @@ private fun ProjectionSettingsScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
                 )
 
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .horizontalScroll(horizontalScrollState)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    item {
-                        PlayerAudioSection(
-                            isEnabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
-                            settings = workingSettings,
-                            eqEditorHeight = eqEditorHeight,
-                            onToggleEnabled = { enabled ->
-                                workingSettings = workingSettings.copy(
-                                    audioRoute = if (enabled) {
-                                        ProjectionAudioRoute.ADAPTER
-                                    } else {
-                                        ProjectionAudioRoute.CAR_BLUETOOTH
-                                    },
-                                )
-                            },
-                            onSelectPlayer = { player ->
-                                workingSettings = workingSettings.copy(selectedPlayer = player)
-                            },
-                            onRoutePlayerSettingsChanged = { updatedPlayerSettings ->
-                                val updatedWorking = workingSettings.copy(
-                                    playerSettings = workingSettings.playerSettings.toMutableMap().apply {
-                                        put(workingSettings.selectedPlayer, updatedPlayerSettings)
-                                    },
-                                )
-                                workingSettings = updatedWorking
+                    PlayerAudioSection(
+                        modifier = Modifier
+                            .width(playerCardWidth)
+                            .height(contentHeight),
+                        isEnabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
+                        settings = workingSettings,
+                        onToggleEnabled = { enabled ->
+                            workingSettings = workingSettings.copy(
+                                audioRoute = if (enabled) {
+                                    ProjectionAudioRoute.ADAPTER
+                                } else {
+                                    ProjectionAudioRoute.CAR_BLUETOOTH
+                                },
+                            )
+                        },
+                        onSelectPlayer = { player ->
+                            workingSettings = workingSettings.copy(selectedPlayer = player)
+                        },
+                        onRoutePlayerSettingsChanged = { updatedPlayerSettings ->
+                            val updatedWorking = workingSettings.copy(
+                                playerSettings = workingSettings.playerSettings.toMutableMap().apply {
+                                    put(workingSettings.selectedPlayer, updatedPlayerSettings)
+                                },
+                            )
+                            workingSettings = updatedWorking
 
-                                val realtimePersisted = savedSettings.copy(
-                                    selectedPlayer = updatedWorking.selectedPlayer,
-                                    playerSettings = updatedWorking.playerSettings,
-                                )
-                                savedSettings = realtimePersisted
-                                viewModel.saveDeviceSettings(realtimePersisted, reconnectRequired = false)
-                            },
-                        )
-                    }
+                            val realtimePersisted = savedSettings.copy(
+                                selectedPlayer = updatedWorking.selectedPlayer,
+                                playerSettings = updatedWorking.playerSettings,
+                            )
+                            savedSettings = realtimePersisted
+                            viewModel.saveDeviceSettings(realtimePersisted, reconnectRequired = false)
+                        },
+                    )
 
-                    item {
-                        MicrophoneSection(
-                            isEnabled = workingSettings.micRoute == ProjectionMicRoute.ADAPTER,
-                            onToggleEnabled = { enabled ->
-                                workingSettings = workingSettings.copy(
-                                    micRoute = if (enabled) {
-                                        ProjectionMicRoute.ADAPTER
-                                    } else {
-                                        ProjectionMicRoute.PHONE
-                                    },
+                    EqualizerSection(
+                        modifier = Modifier
+                            .width(eqCardWidth)
+                            .height(contentHeight),
+                        bandsDb = (workingSettings.playerSettings[workingSettings.selectedPlayer]
+                            ?: ProjectionPlayerAudioSettings()).eqBandsDb,
+                        preset = (workingSettings.playerSettings[workingSettings.selectedPlayer]
+                            ?: ProjectionPlayerAudioSettings()).eqPreset,
+                        onBandChange = { index, value ->
+                            val playerSettings =
+                                workingSettings.playerSettings[workingSettings.selectedPlayer]
+                                    ?: ProjectionPlayerAudioSettings()
+                            val newBands = playerSettings.eqBandsDb.toMutableList().apply {
+                                this[index] = value
+                            }
+                            val updated = playerSettings.copy(
+                                eqPreset = ProjectionEqPreset.detect(newBands),
+                                eqBandsDb = newBands,
+                            )
+                            val updatedWorking = workingSettings.copy(
+                                playerSettings = workingSettings.playerSettings.toMutableMap().apply {
+                                    put(workingSettings.selectedPlayer, updated)
+                                },
+                            )
+                            workingSettings = updatedWorking
+                            val realtimePersisted = savedSettings.copy(
+                                selectedPlayer = updatedWorking.selectedPlayer,
+                                playerSettings = updatedWorking.playerSettings,
+                            )
+                            savedSettings = realtimePersisted
+                            viewModel.saveDeviceSettings(realtimePersisted, reconnectRequired = false)
+                        },
+                        onPresetSelect = { preset ->
+                            val playerSettings =
+                                workingSettings.playerSettings[workingSettings.selectedPlayer]
+                                    ?: ProjectionPlayerAudioSettings()
+                            val updated = if (preset == ProjectionEqPreset.CUSTOM) {
+                                playerSettings.copy(eqPreset = ProjectionEqPreset.CUSTOM)
+                            } else {
+                                playerSettings.copy(
+                                    eqPreset = preset,
+                                    eqBandsDb = preset.bandsDb,
                                 )
-                            },
-                            gainMultiplier = workingSettings.micSettings.gainMultiplier,
-                            onGainChanged = {
-                                workingSettings = workingSettings.copy(
-                                    micSettings = workingSettings.micSettings.copy(gainMultiplier = it),
-                                )
-                            },
-                        )
-                    }
+                            }
+                            val updatedWorking = workingSettings.copy(
+                                playerSettings = workingSettings.playerSettings.toMutableMap().apply {
+                                    put(workingSettings.selectedPlayer, updated)
+                                },
+                            )
+                            workingSettings = updatedWorking
+                            val realtimePersisted = savedSettings.copy(
+                                selectedPlayer = updatedWorking.selectedPlayer,
+                                playerSettings = updatedWorking.playerSettings,
+                            )
+                            savedSettings = realtimePersisted
+                            viewModel.saveDeviceSettings(realtimePersisted, reconnectRequired = false)
+                        },
+                    )
 
-                    item {
-                        DiagnosticsSettingsSection(
-                            diagnosticsText = diagnosticsText,
-                        )
-                    }
+                    MicrophoneSection(
+                        modifier = Modifier
+                            .width(micCardWidth)
+                            .height(contentHeight),
+                        isEnabled = workingSettings.micRoute == ProjectionMicRoute.ADAPTER,
+                        onToggleEnabled = { enabled ->
+                            workingSettings = workingSettings.copy(
+                                micRoute = if (enabled) {
+                                    ProjectionMicRoute.ADAPTER
+                                } else {
+                                    ProjectionMicRoute.PHONE
+                                },
+                            )
+                        },
+                        gainMultiplier = workingSettings.micSettings.gainMultiplier,
+                        onGainChanged = {
+                            workingSettings = workingSettings.copy(
+                                micSettings = workingSettings.micSettings.copy(gainMultiplier = it),
+                            )
+                        },
+                    )
+
+                    DiagnosticsSettingsSection(
+                        modifier = Modifier
+                            .width(diagnosticsCardWidth)
+                            .height(contentHeight),
+                        diagnosticsText = diagnosticsText,
+                    )
                 }
             }
         }
@@ -981,19 +967,20 @@ private fun HeaderButton(
 
 @Composable
 private fun SettingsSectionCard(
+    modifier: Modifier = Modifier,
     title: String,
     subtitle: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp, bottomStart = 0.dp, bottomEnd = 0.dp),
+        modifier = modifier,
+        shape = RoundedCornerShape(30.dp),
         color = Color.White.copy(alpha = 0.06f),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 16.dp),
         ) {
             Text(
@@ -1019,9 +1006,9 @@ private fun SettingsSectionCard(
 
 @Composable
 private fun PlayerAudioSection(
+    modifier: Modifier = Modifier,
     isEnabled: Boolean,
     settings: ProjectionDeviceSettings,
-    eqEditorHeight: Dp,
     onToggleEnabled: (Boolean) -> Unit,
     onSelectPlayer: (ProjectionAudioPlayerType) -> Unit,
     onRoutePlayerSettingsChanged: (ProjectionPlayerAudioSettings) -> Unit,
@@ -1029,6 +1016,7 @@ private fun PlayerAudioSection(
     val playerSettings = settings.playerSettings[settings.selectedPlayer] ?: ProjectionPlayerAudioSettings()
 
     SettingsSectionCard(
+        modifier = modifier,
         title = stringResource(id = R.string.settings_players_title),
     ) {
         AdapterToggleRow(
@@ -1045,92 +1033,81 @@ private fun PlayerAudioSection(
                 onSelect = onSelectPlayer,
             )
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            SliderCard(
-                title = stringResource(id = R.string.settings_gain),
-                valueLabel = formatGain(playerSettings.gainMultiplier),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Slider(
+                VerticalControlSlider(
+                    modifier = Modifier.weight(1f),
+                    title = stringResource(id = R.string.settings_gain),
+                    valueLabel = formatGain(playerSettings.gainMultiplier),
                     value = playerSettings.gainMultiplier,
+                    valueRange = 1f..3f,
                     onValueChange = {
                         onRoutePlayerSettingsChanged(
                             playerSettings.copy(gainMultiplier = it),
                         )
                     },
-                    valueRange = 1f..3f,
                 )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            SliderCard(
-                title = stringResource(id = R.string.settings_loudness),
-                valueLabel = "${playerSettings.loudnessBoostPercent}%",
-            ) {
-                Slider(
+                VerticalControlSlider(
+                    modifier = Modifier.weight(1f),
+                    title = stringResource(id = R.string.settings_loudness),
+                    valueLabel = "${playerSettings.loudnessBoostPercent}%",
                     value = playerSettings.loudnessBoostPercent.toFloat(),
+                    valueRange = 0f..100f,
                     onValueChange = {
                         onRoutePlayerSettingsChanged(
                             playerSettings.copy(loudnessBoostPercent = it.roundToInt()),
                         )
                     },
-                    valueRange = 0f..100f,
                 )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            SliderCard(
-                title = stringResource(id = R.string.settings_bass_boost),
-                valueLabel = "${playerSettings.bassBoostPercent}%",
-            ) {
-                Slider(
+                VerticalControlSlider(
+                    modifier = Modifier.weight(1f),
+                    title = stringResource(id = R.string.settings_bass_boost),
+                    valueLabel = "${playerSettings.bassBoostPercent}%",
                     value = playerSettings.bassBoostPercent.toFloat(),
+                    valueRange = 0f..100f,
                     onValueChange = {
                         onRoutePlayerSettingsChanged(
                             playerSettings.copy(bassBoostPercent = it.roundToInt()),
                         )
                     },
-                    valueRange = 0f..100f,
                 )
             }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            VerticalEqEditor(
-                modifier = Modifier.height(eqEditorHeight),
-                bandsDb = playerSettings.eqBandsDb,
-                onBandChange = { index: Int, value: Float ->
-                    val newBands = playerSettings.eqBandsDb.toMutableList().apply {
-                        this[index] = value
-                    }
-                    onRoutePlayerSettingsChanged(
-                        playerSettings.copy(
-                            eqPreset = ProjectionEqPreset.detect(newBands),
-                            eqBandsDb = newBands,
-                        ),
-                    )
-                },
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            PresetTabs(
-                selected = playerSettings.eqPreset,
-                onSelect = { preset: ProjectionEqPreset ->
-                    val updated = if (preset == ProjectionEqPreset.CUSTOM) {
-                        playerSettings.copy(eqPreset = ProjectionEqPreset.CUSTOM)
-                    } else {
-                        playerSettings.copy(
-                            eqPreset = preset,
-                            eqBandsDb = preset.bandsDb,
-                        )
-                    }
-                    onRoutePlayerSettingsChanged(updated)
-                },
-            )
         }
+    }
+}
+
+@Composable
+private fun EqualizerSection(
+    modifier: Modifier = Modifier,
+    bandsDb: List<Float>,
+    preset: ProjectionEqPreset,
+    onBandChange: (Int, Float) -> Unit,
+    onPresetSelect: (ProjectionEqPreset) -> Unit,
+) {
+    SettingsSectionCard(
+        modifier = modifier,
+        title = stringResource(id = R.string.settings_eq_title),
+    ) {
+        VerticalEqEditor(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            bandsDb = bandsDb,
+            onBandChange = onBandChange,
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        PresetTabs(
+            selected = preset,
+            onSelect = onPresetSelect,
+        )
     }
 }
 
@@ -1225,44 +1202,6 @@ private fun PresetTabs(
 }
 
 @Composable
-private fun SliderCard(
-    title: String,
-    valueLabel: String,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        color = Color.White.copy(alpha = 0.04f),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                )
-                Text(
-                    text = valueLabel,
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            content()
-        }
-    }
-}
-
-@Composable
 private fun VerticalEqEditor(
     modifier: Modifier = Modifier,
     bandsDb: List<Float>,
@@ -1281,14 +1220,8 @@ private fun VerticalEqEditor(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 18.dp),
+                .padding(horizontal = 12.dp, vertical = 12.dp),
         ) {
-            Text(
-                text = stringResource(id = R.string.settings_eq_title),
-                color = Color.White,
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-            )
-            Spacer(modifier = Modifier.height(18.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1298,7 +1231,7 @@ private fun VerticalEqEditor(
             ) {
                 labels.forEachIndexed { index, label ->
                     VerticalEqBand(
-                        width = 60.dp,
+                        width = 72.dp,
                         label = label,
                         value = bandsDb.getOrElse(index) { 0f },
                         onValueChange = { onBandChange(index, it) },
@@ -1332,7 +1265,7 @@ private fun VerticalEqBand(
         Text(
             text = formatEq(value),
             color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
             textAlign = TextAlign.Center,
         )
 
@@ -1349,7 +1282,7 @@ private fun VerticalEqBand(
                 onValueChange = onValueChange,
                 valueRange = -12f..12f,
                 modifier = Modifier
-                    .requiredSize(width = sliderLength, height = 72.dp)
+                    .requiredSize(width = sliderLength, height = 92.dp)
                     .graphicsLayer {
                         rotationZ = -90f
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
@@ -1360,7 +1293,7 @@ private fun VerticalEqBand(
         Text(
             text = label,
             color = Color.White,
-            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             textAlign = TextAlign.Center,
         )
     }
@@ -1368,12 +1301,14 @@ private fun VerticalEqBand(
 
 @Composable
 private fun MicrophoneSection(
+    modifier: Modifier = Modifier,
     isEnabled: Boolean,
     onToggleEnabled: (Boolean) -> Unit,
     gainMultiplier: Float,
     onGainChanged: (Float) -> Unit,
 ) {
     SettingsSectionCard(
+        modifier = modifier,
         title = stringResource(id = R.string.settings_mic_title),
     ) {
         AdapterToggleRow(
@@ -1384,31 +1319,33 @@ private fun MicrophoneSection(
 
         if (isEnabled) {
             Spacer(modifier = Modifier.height(20.dp))
-            SliderCard(
+            VerticalControlSlider(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
                 title = stringResource(id = R.string.settings_mic_gain),
                 valueLabel = formatGain(gainMultiplier),
-            ) {
-                Slider(
-                    value = gainMultiplier,
-                    onValueChange = onGainChanged,
-                    valueRange = 1f..3f,
-                )
-            }
+                value = gainMultiplier,
+                valueRange = 1f..3f,
+                onValueChange = onGainChanged,
+            )
         }
     }
 }
 
 @Composable
 private fun DiagnosticsSettingsSection(
+    modifier: Modifier = Modifier,
     diagnosticsText: String,
 ) {
     SettingsSectionCard(
+        modifier = modifier,
         title = stringResource(id = R.string.logs_title),
     ) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 180.dp, max = 280.dp),
+                .weight(1f),
             shape = RoundedCornerShape(24.dp),
             color = Color.White.copy(alpha = 0.04f),
             border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
@@ -1424,6 +1361,71 @@ private fun DiagnosticsSettingsSection(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VerticalControlSlider(
+    modifier: Modifier = Modifier,
+    title: String,
+    valueLabel: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+) {
+    val animatedValue by animateFloatAsState(
+        targetValue = value,
+        animationSpec = tween(140),
+        label = "verticalControlValue",
+    )
+
+    Surface(
+        modifier = modifier.fillMaxHeight(),
+        shape = RoundedCornerShape(24.dp),
+        color = Color.White.copy(alpha = 0.04f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = title,
+                color = Color.White.copy(alpha = 0.82f),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                textAlign = TextAlign.Center,
+            )
+
+            Text(
+                text = valueLabel,
+                color = Color.White,
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                textAlign = TextAlign.Center,
+            )
+
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                val sliderLength = maxHeight.coerceAtLeast(220.dp)
+                Slider(
+                    value = animatedValue,
+                    onValueChange = onValueChange,
+                    valueRange = valueRange,
+                    modifier = Modifier
+                        .requiredSize(width = sliderLength, height = 94.dp)
+                        .graphicsLayer {
+                            rotationZ = -90f
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
+                        },
+                )
             }
         }
     }
