@@ -55,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -77,13 +78,16 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
@@ -115,12 +119,102 @@ private val AppColorScheme = darkColorScheme(
     onSecondary = Color(0xFF071019),
 )
 
+private val AppTypography = Typography(
+    displayLarge = iosTextStyle(
+        fontSize = 34.sp,
+        lineHeight = 38.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.8).sp,
+    ),
+    headlineMedium = iosTextStyle(
+        fontSize = 28.sp,
+        lineHeight = 32.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.5).sp,
+    ),
+    headlineSmall = iosTextStyle(
+        fontSize = 24.sp,
+        lineHeight = 28.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.4).sp,
+    ),
+    titleLarge = iosTextStyle(
+        fontSize = 20.sp,
+        lineHeight = 24.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.3).sp,
+    ),
+    titleMedium = iosTextStyle(
+        fontSize = 17.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = (-0.2).sp,
+    ),
+    titleSmall = iosTextStyle(
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = (-0.1).sp,
+    ),
+    bodyLarge = iosTextStyle(
+        fontSize = 17.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = (-0.2).sp,
+    ),
+    bodyMedium = iosTextStyle(
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = (-0.1).sp,
+    ),
+    bodySmall = iosTextStyle(
+        fontSize = 13.sp,
+        lineHeight = 17.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.sp,
+    ),
+    labelLarge = iosTextStyle(
+        fontSize = 15.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.1).sp,
+    ),
+    labelMedium = iosTextStyle(
+        fontSize = 13.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    labelSmall = iosTextStyle(
+        fontSize = 12.sp,
+        lineHeight = 14.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+)
+
+private fun iosTextStyle(
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    lineHeight: androidx.compose.ui.unit.TextUnit,
+    fontWeight: FontWeight,
+    letterSpacing: androidx.compose.ui.unit.TextUnit,
+): TextStyle = TextStyle(
+    fontFamily = FontFamily.SansSerif,
+    fontSize = fontSize,
+    lineHeight = lineHeight,
+    fontWeight = fontWeight,
+    letterSpacing = letterSpacing,
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+)
+
 @Composable
 fun CarPlayComposeTheme(
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(
         colorScheme = AppColorScheme,
+        typography = AppTypography,
         content = content,
     )
 }
@@ -530,10 +624,10 @@ private fun SearchStatusLine(
         ) {
             Text(
                 text = status,
-                color = Color.White.copy(alpha = 0.46f),
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.Medium,
-                    fontSize = MaterialTheme.typography.titleMedium.fontSize * 1.3f,
+                color = Color.White.copy(alpha = 0.42f),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = FontWeight.Normal,
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 1.24f,
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -589,10 +683,10 @@ private fun DeviceSelectionField(
                     if (showCompactStatusOnly) {
                         Text(
                             text = fallbackStatus,
-                            color = Color.White.copy(alpha = 0.84f),
+                            color = Color.White.copy(alpha = 0.76f),
                             style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = MaterialTheme.typography.titleLarge.fontSize * 1.3f,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = MaterialTheme.typography.titleLarge.fontSize * 1.22f,
                             ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -610,10 +704,10 @@ private fun DeviceSelectionField(
                         )
                         Text(
                             text = selectedDevice?.subtitle ?: fallbackStatus,
-                            color = Color.White.copy(alpha = 0.68f),
+                            color = Color.White.copy(alpha = 0.58f),
                             style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Medium,
-                                fontSize = MaterialTheme.typography.titleMedium.fontSize * 1.3f,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = MaterialTheme.typography.titleMedium.fontSize * 1.24f,
                             ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -666,9 +760,10 @@ private fun DeviceSelectionField(
                                 )
                                 Text(
                                     text = device.subtitle,
-                                    color = Color.White.copy(alpha = 0.64f),
+                                    color = Color.White.copy(alpha = 0.58f),
                                     style = MaterialTheme.typography.titleSmall.copy(
-                                        fontSize = MaterialTheme.typography.titleSmall.fontSize * 1.3f,
+                                        fontWeight = FontWeight.Normal,
+                                        fontSize = MaterialTheme.typography.titleSmall.fontSize * 1.22f,
                                     ),
                                 )
                             }
