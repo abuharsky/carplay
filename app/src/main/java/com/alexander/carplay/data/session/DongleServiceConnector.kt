@@ -33,6 +33,7 @@ class DongleServiceConnector(
     companion object {
         const val DEFAULT_REPLAY_CAPTURE_PATH =
             "/data/local/tmp/test-capture.bin"
+        private const val SOURCE = "UiSession"
     }
 
     private val appContext = application.applicationContext
@@ -51,6 +52,7 @@ class DongleServiceConnector(
     private var bound = false
     private var pendingSurface: Surface? = null
     private var pendingVideoStreamEnabled: Boolean? = null
+    private var lastLoggedSnapshotSignature: String? = null
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val logs = logStore.logs
@@ -61,6 +63,10 @@ class DongleServiceConnector(
             name: ComponentName?,
             service: IBinder?,
         ) {
+            logStore.info(
+                SOURCE,
+                "Service connected: component=${name?.className ?: "-"} pendingSurface=${pendingSurface != null} pendingVideo=${pendingVideoStreamEnabled ?: "null"}",
+            )
             binder = service as? DongleService.ServiceBinder
             binder?.ensureStarted()
             stateJob?.cancel()
@@ -68,23 +74,28 @@ class DongleServiceConnector(
             stateJob = scope.launch {
                 binder?.state?.collect { snapshot ->
                     _state.value = snapshot
+                    logSnapshot(snapshot)
                 }
             }
             eventsJob = scope.launch {
                 binder?.events?.collect { event ->
+                    logStore.info(SOURCE, "UI event from service: $event")
                     _events.emit(event)
                 }
             }
             pendingSurface?.let { safeSurface ->
+                logStore.info(SOURCE, "Flushing pending surface to service after bind")
                 binder?.attachSurface(safeSurface)
                 pendingSurface = null
             }
             pendingVideoStreamEnabled?.let { enabled ->
+                logStore.info(SOURCE, "Flushing pending video target=$enabled after bind")
                 binder?.setVideoStreamEnabled(enabled)
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            logStore.info(SOURCE, "Service disconnected: component=${name?.className ?: "-"}")
             binder = null
             stateJob?.cancel()
             eventsJob?.cancel()
@@ -96,6 +107,7 @@ class DongleServiceConnector(
     }
 
     fun ensureServiceStarted() {
+        logStore.info(SOURCE, "ensureServiceStarted")
         val intent = Intent(appContext, DongleService::class.java)
         ContextCompat.startForegroundService(appContext, intent)
     }
@@ -127,13 +139,16 @@ class DongleServiceConnector(
 
     fun bind() {
         if (bound) return
+        logStore.info(SOURCE, "bind requested")
         ensureServiceStarted()
         val intent = Intent(appContext, DongleService::class.java)
         bound = appContext.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        logStore.info(SOURCE, "bind result=$bound")
     }
 
     fun unbind() {
         if (!bound) return
+        logStore.info(SOURCE, "unbind requested")
         runCatching { appContext.unbindService(serviceConnection) }
         bound = false
         binder = null
@@ -154,6 +169,7 @@ class DongleServiceConnector(
     fun setVideoStreamEnabled(enabled: Boolean) {
         ensureServiceStarted()
         pendingVideoStreamEnabled = enabled
+        logStore.info(SOURCE, "setVideoStreamEnabled enabled=$enabled binderReady=${binder != null}")
         binder?.setVideoStreamEnabled(enabled)
     }
 
@@ -170,10 +186,12 @@ class DongleServiceConnector(
     fun attachSurface(surface: Surface) {
         ensureServiceStarted()
         pendingSurface = surface
+        logStore.info(SOURCE, "attachSurface binderReady=${binder != null}")
         binder?.attachSurface(surface)
     }
 
     fun detachSurface() {
+        logStore.info(SOURCE, "detachSurface binderReady=${binder != null}")
         binder?.detachSurface()
         pendingSurface = null
     }
@@ -185,5 +203,22 @@ class DongleServiceConnector(
     ) {
         val copiedEvent = MotionEvent.obtain(event)
         binder?.sendMotionEvent(copiedEvent, surfaceWidth, surfaceHeight) ?: copiedEvent.recycle()
+    }
+
+    private fun logSnapshot(snapshot: ProjectionSessionSnapshot) {
+        val signature = buildString {
+            append("state=").append(snapshot.state)
+            append(" phase=").append(snapshot.protocolPhase)
+            append(" surface=").append(snapshot.surfaceAttached)
+            append(" device=").append(snapshot.currentDeviceName ?: snapshot.currentDeviceId ?: "-")
+            append(" video=")
+            append(snapshot.videoWidth ?: 0)
+            append("x")
+            append(snapshot.videoHeight ?: 0)
+            append(" msg=").append(snapshot.statusMessage)
+        }
+        if (signature == lastLoggedSnapshotSignature) return
+        lastLoggedSnapshotSignature = signature
+        logStore.info(SOURCE, "Snapshot $signature")
     }
 }

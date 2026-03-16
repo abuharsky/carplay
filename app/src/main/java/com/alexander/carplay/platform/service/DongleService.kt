@@ -17,21 +17,30 @@ import com.alexander.carplay.data.logging.DiagnosticLogStore
 import com.alexander.carplay.data.session.DongleSessionManager
 import com.alexander.carplay.data.usb.AndroidUsbTransport
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
+import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 class DongleService : Service() {
     companion object {
         const val ACTION_START_USB = "com.alexander.carplay.action.START_USB"
         const val ACTION_START_REPLAY = "com.alexander.carplay.action.START_REPLAY"
         const val EXTRA_CAPTURE_PATH = "capture_path"
+        private const val SOURCE = "Service"
     }
 
     private lateinit var logStore: DiagnosticLogStore
     private lateinit var sessionManager: DongleSessionManager
+    private lateinit var wakeLockController: ServiceWakeLockController
     private val binder = ServiceBinder()
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(
@@ -46,10 +55,20 @@ class DongleService : Service() {
             }
 
             when (intent.action) {
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> sessionManager.onUsbAttached(device)
-                UsbManager.ACTION_USB_DEVICE_DETACHED -> sessionManager.onUsbDetached(device)
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    logStore.info(SOURCE, "USB broadcast: attached device=${device?.deviceName ?: "-"}")
+                    sessionManager.onUsbAttached(device)
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    logStore.info(SOURCE, "USB broadcast: detached device=${device?.deviceName ?: "-"}")
+                    sessionManager.onUsbDetached(device)
+                }
                 AndroidUsbTransport.ACTION_USB_PERMISSION -> {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    logStore.info(
+                        SOURCE,
+                        "USB permission result: granted=$granted device=${device?.deviceName ?: "-"}",
+                    )
                     sessionManager.onUsbPermissionResult(device, granted)
                 }
             }
@@ -60,7 +79,9 @@ class DongleService : Service() {
         super.onCreate()
         val appContainer = (application as com.alexander.carplay.CarPlayApp).appContainer
         logStore = appContainer.logStore
+        logStore.info(SOURCE, "onCreate")
         sessionManager = DongleSessionManager(this, logStore, appContainer.settingsPort)
+        wakeLockController = ServiceWakeLockController(this, logStore)
 
         ServiceNotificationFactory.ensureChannel(this)
         val notification = ServiceNotificationFactory.create(this)
@@ -79,6 +100,14 @@ class DongleService : Service() {
             )
         }
         registerUsbReceiver()
+        serviceScope.launch {
+            sessionManager.state.collect { snapshot ->
+                wakeLockController.setActive(
+                    active = snapshot.shouldHoldServiceWakeLock(),
+                    reason = snapshot.state.name,
+                )
+            }
+        }
     }
 
     override fun onStartCommand(
@@ -86,6 +115,10 @@ class DongleService : Service() {
         flags: Int,
         startId: Int,
     ): Int {
+        logStore.info(
+            SOURCE,
+            "onStartCommand action=${intent?.action ?: "-"} startId=$startId flags=$flags",
+        )
         when (intent?.action) {
             ACTION_START_REPLAY -> {
                 val capturePath = intent.getStringExtra(EXTRA_CAPTURE_PATH)
@@ -103,10 +136,16 @@ class DongleService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
+        .also {
+            logStore.info(SOURCE, "onBind action=${intent?.action ?: "-"}")
+        }
 
     override fun onDestroy() {
         super.onDestroy()
+        logStore.info(SOURCE, "onDestroy")
         unregisterReceiver(usbReceiver)
+        wakeLockController.release("service destroyed")
+        serviceScope.cancel()
         sessionManager.shutdown()
     }
 
@@ -183,4 +222,20 @@ class DongleService : Service() {
             sessionManager.sendMotionEvent(event, surfaceWidth, surfaceHeight)
         }
     }
+
+    private fun ProjectionSessionSnapshot.shouldHoldServiceWakeLock(): Boolean =
+        when (state) {
+            ProjectionConnectionState.WAITING_PERMISSION,
+            ProjectionConnectionState.CONNECTING,
+            ProjectionConnectionState.INIT,
+            ProjectionConnectionState.WAITING_PHONE,
+            ProjectionConnectionState.STREAMING,
+            -> true
+
+            ProjectionConnectionState.IDLE,
+            ProjectionConnectionState.WAITING_VEHICLE,
+            ProjectionConnectionState.SEARCHING,
+            ProjectionConnectionState.ERROR,
+            -> false
+        }
 }

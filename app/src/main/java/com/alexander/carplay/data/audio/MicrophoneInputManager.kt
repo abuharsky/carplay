@@ -14,6 +14,8 @@ class MicrophoneInputManager(
     companion object {
         private const val SOURCE = "Mic"
         private const val INPUT_SAMPLE_RATE = 16_000
+        private const val MIN_GAIN_LOG_INTERVAL_MS = 1_500L
+        private const val MIN_GAIN_LOG_DELTA = 0.10f
     }
 
     private val channelConfig = AudioFormat.CHANNEL_IN_MONO
@@ -29,12 +31,27 @@ class MicrophoneInputManager(
     @Volatile
     private var isRecording = false
 
+    @Volatile
+    private var lastLoggedGainMultiplier = Float.NaN
+
+    @Volatile
+    private var lastGainLogAtMs = 0L
+
     private var audioRecord: AudioRecord? = null
     private var recordThread: Thread? = null
 
     fun updateGain(gainMultiplier: Float) {
         this.gainMultiplier = gainMultiplier.coerceAtLeast(0f)
-        logStore.info(SOURCE, "Microphone gain updated to ${"%.2f".format(this.gainMultiplier)}x")
+        val now = System.currentTimeMillis()
+        val gainDelta = kotlin.math.abs(this.gainMultiplier - lastLoggedGainMultiplier)
+        val shouldLog = lastLoggedGainMultiplier.isNaN() ||
+            gainDelta >= MIN_GAIN_LOG_DELTA ||
+            now - lastGainLogAtMs >= MIN_GAIN_LOG_INTERVAL_MS
+        if (shouldLog) {
+            lastLoggedGainMultiplier = this.gainMultiplier
+            lastGainLogAtMs = now
+            logStore.info(SOURCE, "Microphone gain updated to ${"%.2f".format(this.gainMultiplier)}x")
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -107,6 +124,8 @@ class MicrophoneInputManager(
             SOURCE,
             "Microphone capture started ${INPUT_SAMPLE_RATE}Hz mono gain=${"%.2f".format(gainMultiplier)}x",
         )
+        lastLoggedGainMultiplier = gainMultiplier
+        lastGainLogAtMs = System.currentTimeMillis()
     }
 
     fun stop(reason: String = "stop requested") {

@@ -58,14 +58,21 @@ class AudioStreamManager(
     private val tracks = mutableMapOf<AudioKey, ManagedTrack>()
     private val categories = mutableMapOf<AudioKey, StreamKey>()
     private val protocolVolumeDirectives = mutableMapOf<AudioKey, VolumeDirective>()
+    private val provisionalPlaybackKeys = mutableSetOf<AudioKey>()
     private var currentDeviceSettings: ProjectionDeviceSettings? = null
 
     fun updateDeviceSettings(settings: ProjectionDeviceSettings?) {
+        val previousSettings = currentDeviceSettings
         currentDeviceSettings = settings
-        logStore.info(
-            SOURCE,
-            "Device audio settings applied: route=${settings?.audioRoute ?: "default"}, mic=${settings?.micRoute ?: "default"}",
-        )
+        if (
+            previousSettings?.audioRoute != settings?.audioRoute ||
+            previousSettings?.micRoute != settings?.micRoute
+        ) {
+            logStore.info(
+                SOURCE,
+                "Device audio route updated: route=${settings?.audioRoute ?: "default"}, mic=${settings?.micRoute ?: "default"}",
+            )
+        }
         tracks.forEach { (audioKey, managedTrack) ->
             categories[audioKey]?.let { category ->
                 applyEffects(managedTrack, settingsFor(category))
@@ -94,15 +101,11 @@ class AudioStreamManager(
 
         val audioKey = AudioKey(packet.decodeType, packet.audioType)
         val streamCategory = categories[audioKey]
-        if (streamCategory == null) {
-            logStore.info(
-                SOURCE,
-                "Audio payload ignored: route not assigned decodeType=${packet.decodeType} audioType=${packet.audioType}",
-            )
-            return
+        val stream = if (streamCategory != null) {
+            tracks[audioKey] ?: prepareTrack(audioKey, streamCategory)
+        } else {
+            startProvisionalPlayback(audioKey)
         }
-
-        val stream = tracks[audioKey] ?: prepareTrack(audioKey, streamCategory)
         if (stream == null) {
             logStore.error(
                 SOURCE,
@@ -111,7 +114,7 @@ class AudioStreamManager(
             return
         }
 
-        val playerSettings = settingsFor(streamCategory)
+        val playerSettings = streamCategory?.let(::settingsFor) ?: ProjectionPlayerAudioSettings()
         applyEffects(stream, playerSettings)
         val payload = applyGainIfNeeded(packet.payload, effectiveGainFor(audioKey, playerSettings))
         stream.track.write(payload, 0, payload.size)
@@ -129,6 +132,7 @@ class AudioStreamManager(
         tracks.clear()
         categories.clear()
         protocolVolumeDirectives.clear()
+        provisionalPlaybackKeys.clear()
         currentDeviceSettings = null
     }
 
@@ -153,6 +157,7 @@ class AudioStreamManager(
             Cpc200Protocol.AudioCommand.SIRI_STOP -> stopStream(audioKey)
             Cpc200Protocol.AudioCommand.PHONE_START -> startStream(audioKey, StreamKey.PHONE)
             Cpc200Protocol.AudioCommand.PHONE_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.PHONE_INCOMING -> startStream(audioKey, StreamKey.ALERT)
             Cpc200Protocol.AudioCommand.ALERT_START -> startStream(audioKey, StreamKey.ALERT)
             Cpc200Protocol.AudioCommand.ALERT_STOP -> stopStream(audioKey)
         }
@@ -231,6 +236,7 @@ class AudioStreamManager(
         Cpc200Protocol.AudioCommand.INPUT_CONFIG -> "inputConfig"
         Cpc200Protocol.AudioCommand.PHONE_START -> "phoneStart"
         Cpc200Protocol.AudioCommand.PHONE_STOP -> "phoneStop"
+        Cpc200Protocol.AudioCommand.PHONE_INCOMING -> "phoneIncoming"
         Cpc200Protocol.AudioCommand.NAVI_START -> "naviStart"
         Cpc200Protocol.AudioCommand.NAVI_STOP -> "naviStop"
         Cpc200Protocol.AudioCommand.SIRI_START -> "siriStart"
@@ -247,6 +253,14 @@ class AudioStreamManager(
         streamKey: StreamKey,
     ) {
         categories[audioKey] = streamKey
+        provisionalPlaybackKeys.remove(audioKey)
+        val desiredFormat = decodeTypeToFormat(audioKey.decodeType, streamKey) ?: return
+        val existingTrack = tracks[audioKey]
+        if (existingTrack != null && existingTrack.format != desiredFormat) {
+            releaseManagedTrack(existingTrack)
+            tracks.remove(audioKey)
+        }
+
         val managedTrack = tracks[audioKey] ?: prepareTrack(audioKey, streamKey) ?: return
         applyEffects(managedTrack, settingsFor(streamKey))
         managedTrack.track.play()
@@ -258,18 +272,27 @@ class AudioStreamManager(
 
     private fun stopStream(audioKey: AudioKey) {
         categories.remove(audioKey)
+        provisionalPlaybackKeys.remove(audioKey)
         tracks.remove(audioKey)?.let { managed ->
-            managed.track.pause()
-            managed.track.flush()
-            managed.equalizer?.release()
-            managed.bassBoost?.release()
-            managed.loudnessEnhancer?.release()
-            managed.track.release()
+            releaseManagedTrack(managed)
             logStore.info(
                 SOURCE,
                 "Audio stream stopped: key=${audioKey.decodeType}/${audioKey.audioType}",
             )
         }
+    }
+
+    private fun startProvisionalPlayback(audioKey: AudioKey): ManagedTrack? {
+        val managedTrack = tracks[audioKey] ?: prepareTrack(audioKey, StreamKey.MEDIA) ?: return null
+        applyEffects(managedTrack, ProjectionPlayerAudioSettings())
+        managedTrack.track.play()
+        if (provisionalPlaybackKeys.add(audioKey)) {
+            logStore.info(
+                SOURCE,
+                "Audio payload accepted without route: provisional playback key=${audioKey.decodeType}/${audioKey.audioType}",
+            )
+        }
+        return managedTrack
     }
 
     private fun prepareTrack(
@@ -384,6 +407,15 @@ class AudioStreamManager(
         return runCatching {
             LoudnessEnhancer(audioSessionId).apply { enabled = false }
         }.getOrNull()
+    }
+
+    private fun releaseManagedTrack(managed: ManagedTrack) {
+        managed.track.pause()
+        managed.track.flush()
+        managed.equalizer?.release()
+        managed.bassBoost?.release()
+        managed.loudnessEnhancer?.release()
+        managed.track.release()
     }
 
     private fun applyEffects(

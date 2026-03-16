@@ -13,20 +13,29 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.alexander.carplay.CarPlayApp
+import com.alexander.carplay.data.logging.DiagnosticLogStore
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModel
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModelFactory
 
 class CarPlayActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_REPLAY_CAPTURE_PATH = "replay_capture_path"
+        private const val LOG_SOURCE = "Activity"
     }
 
     private val viewModel: CarPlayViewModel by viewModels {
         CarPlayViewModelFactory((application as CarPlayApp).appContainer)
     }
+    private val logStore: DiagnosticLogStore by lazy {
+        (application as CarPlayApp).appContainer.logStore
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        logStore.info(
+            LOG_SOURCE,
+            "onCreate taskId=$taskId changingConfig=$isChangingConfigurations intent=${describeIntent(intent)}",
+        )
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
         requestRuntimePermissionsIfNeeded()
@@ -42,6 +51,7 @@ class CarPlayActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        logStore.info(LOG_SOURCE, "onStart taskId=$taskId")
         hideSystemBars()
         viewModel.onStart()
         viewModel.onBindUi()
@@ -49,25 +59,41 @@ class CarPlayActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        logStore.info(LOG_SOURCE, "onResume taskId=$taskId hasFocus=${window.decorView.hasWindowFocus()}")
         hideSystemBars()
     }
 
     override fun onStop() {
         super.onStop()
+        logStore.info(
+            LOG_SOURCE,
+            "onStop taskId=$taskId changingConfig=$isChangingConfigurations finishing=$isFinishing",
+        )
         viewModel.onUnbindUi()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        logStore.info(LOG_SOURCE, "onWindowFocusChanged hasFocus=$hasFocus taskId=$taskId")
         if (hasFocus) {
             hideSystemBars()
+            viewModel.onWindowFocusGained()
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        logStore.info(LOG_SOURCE, "onNewIntent ${describeIntent(intent)}")
         setIntent(intent)
         maybeStartReplayFromIntent(intent, initial = false)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        logStore.info(
+            LOG_SOURCE,
+            "onDestroy taskId=$taskId changingConfig=$isChangingConfigurations finishing=$isFinishing",
+        )
     }
 
     private fun hideSystemBars() {
@@ -104,5 +130,11 @@ class CarPlayActivity : AppCompatActivity() {
         if (!initial) {
             Toast.makeText(this, "Replay started: $capturePath", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun describeIntent(intent: Intent?): String {
+        if (intent == null) return "null"
+        val extras = intent.extras?.keySet()?.sorted()?.joinToString(prefix = "[", postfix = "]") ?: "[]"
+        return "action=${intent.action ?: "-"} extras=$extras flags=0x${intent.flags.toString(16)}"
     }
 }

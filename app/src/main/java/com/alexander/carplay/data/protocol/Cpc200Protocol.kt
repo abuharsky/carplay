@@ -141,6 +141,7 @@ object Cpc200Protocol {
         const val MEDIA_STOP = 11
         const val ALERT_START = 12
         const val ALERT_STOP = 13
+        const val PHONE_INCOMING = 14
     }
 
     data class Header(

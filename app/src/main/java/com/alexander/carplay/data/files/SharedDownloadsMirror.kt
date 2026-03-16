@@ -6,7 +6,9 @@ import android.util.Log
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class SharedDownloadsMirror(
     context: Context,
@@ -19,24 +21,47 @@ class SharedDownloadsMirror(
             "/storage/emulated/0/Download",
             "/storage/emulated/0/Downloads",
         )
+
+        private val ioExecutor = Executors.newSingleThreadExecutor()
+        private val pendingLogLines = ConcurrentLinkedQueue<String>()
+        private val logFlushScheduled = AtomicBoolean(false)
+
+        @Volatile
+        private var lastWorkingDirectory: File? = null
+
+        @Volatile
+        private var lastReportedPath: String? = null
     }
 
     private val appContext = context.applicationContext
-    private val ioExecutor = Executors.newSingleThreadExecutor()
-
-    @Volatile
-    private var lastWorkingDirectory: File? = null
-
-    @Volatile
-    private var lastReportedPath: String? = null
 
     fun appendLog(line: String) {
+        pendingLogLines.add(line)
+        scheduleLogFlush()
+    }
+
+    private fun scheduleLogFlush() {
+        if (!logFlushScheduled.compareAndSet(false, true)) return
         ioExecutor.execute {
-            val result = writeFirstAvailable("carplay.log") { file ->
-                appendBoundedUtf8(file, line)
-            }
-            result.exceptionOrNull()?.let { error ->
-                Log.w(TAG, "Failed to append carplay.log", error)
+            try {
+                while (true) {
+                    val batch = drainPendingLogLines()
+                    if (batch.isEmpty()) return@execute
+
+                    val result = writeFirstAvailable("carplay.log") { file ->
+                        appendBoundedUtf8(file, batch)
+                    }
+                    result.exceptionOrNull()?.let { error ->
+                        Log.w(TAG, "Failed to append carplay.log", error)
+                    }
+
+                    if (pendingLogLines.isEmpty()) return@execute
+                }
+            } finally {
+                logFlushScheduled.set(false)
+                if (pendingLogLines.isNotEmpty()) {
+                    scheduleLogFlush()
+                }
             }
         }
     }
@@ -52,6 +77,15 @@ class SharedDownloadsMirror(
             Log.w(TAG, "Failed to write shared file $name", error)
             null
         }
+    }
+
+    private fun drainPendingLogLines(): String {
+        val builder = StringBuilder()
+        while (true) {
+            val line = pendingLogLines.poll() ?: break
+            builder.append(line)
+        }
+        return builder.toString()
     }
 
     private fun orderedDirectories(): List<File> {
@@ -107,9 +141,9 @@ class SharedDownloadsMirror(
 
     private fun appendBoundedUtf8(
         file: File,
-        message: String,
+        content: String,
     ) {
-        val newBytes = message.toByteArray(StandardCharsets.UTF_8)
+        val newBytes = content.toByteArray(StandardCharsets.UTF_8)
         RandomAccessFile(file, "rw").use { raf ->
             raf.seek(raf.length())
             raf.write(newBytes)

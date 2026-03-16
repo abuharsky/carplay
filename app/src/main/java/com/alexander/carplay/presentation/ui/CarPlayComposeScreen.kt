@@ -1,6 +1,14 @@
 package com.alexander.carplay.presentation.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.Surface as AndroidSurface
 import android.view.TextureView
 import android.view.View
@@ -73,9 +81,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.colorResource
@@ -109,6 +119,7 @@ import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.presentation.viewmodel.CarPlayDeviceUiState
 import com.alexander.carplay.presentation.viewmodel.CarPlayUiState
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.roundToInt
 
@@ -267,8 +278,18 @@ fun CarPlayRoute(
     }
 
     val selectedDevice = devices.firstOrNull { it.id == selectedDeviceId } ?: devices.firstOrNull()
-    val connectActionEnabled = selectedDevice != null
-    val shouldShowStop = selectedDevice?.isConnecting == true || selectedDevice?.isActive == true
+    val sessionIsActive = sessionSnapshot.state == com.alexander.carplay.domain.model.ProjectionConnectionState.STREAMING ||
+        sessionSnapshot.protocolPhase == com.alexander.carplay.domain.model.ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
+        sessionSnapshot.protocolPhase == com.alexander.carplay.domain.model.ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
+        sessionSnapshot.protocolPhase == com.alexander.carplay.domain.model.ProjectionProtocolPhase.STREAMING_ACTIVE
+    val hasResumeSnapshot = sessionIsActive &&
+        ProjectionFrameSnapshotStore.peekFresh(
+            targetWidth = uiState.videoWidth,
+            targetHeight = uiState.videoHeight,
+        ) != null
+    val effectiveShowConnectionOverlay = uiState.showConnectionOverlay && !hasResumeSnapshot
+    val shouldShowStop = sessionIsActive || selectedDevice?.isConnecting == true || selectedDevice?.isActive == true
+    val connectActionEnabled = shouldShowStop || selectedDevice != null
 
     Box(
         modifier = Modifier
@@ -279,11 +300,12 @@ fun CarPlayRoute(
             viewModel = viewModel,
             videoWidth = uiState.videoWidth,
             videoHeight = uiState.videoHeight,
-            touchEnabled = !uiState.showConnectionOverlay,
+            sessionActive = sessionIsActive,
+            touchEnabled = !effectiveShowConnectionOverlay,
         )
 
         AnimatedVisibility(
-            visible = uiState.showConnectionOverlay,
+            visible = effectiveShowConnectionOverlay,
             enter = fadeIn(animationSpec = tween(320)),
             exit = fadeOut(animationSpec = tween(420)),
             modifier = Modifier
@@ -365,17 +387,57 @@ private fun ProjectionTextureSurface(
     viewModel: CarPlayViewModel,
     videoWidth: Int?,
     videoHeight: Int?,
+    sessionActive: Boolean,
     touchEnabled: Boolean,
 ) {
     val latestViewModel by rememberUpdatedState(viewModel)
     val latestVideoWidth by rememberUpdatedState(videoWidth)
     val latestVideoHeight by rememberUpdatedState(videoHeight)
+    val latestSessionActive by rememberUpdatedState(sessionActive)
     val lifecycleOwner = LocalLifecycleOwner.current
     var textureSurface by remember { mutableStateOf<AndroidSurface?>(null) }
     var textureViewRef by remember { mutableStateOf<TextureView?>(null) }
     var surfaceBoundToSession by remember { mutableStateOf(false) }
+    var lifecycleSurfaceEnabled by remember { mutableStateOf(false) }
+    var resumeSnapshot by remember(sessionActive, videoWidth, videoHeight) {
+        mutableStateOf(
+            if (sessionActive) {
+                ProjectionFrameSnapshotStore.peekFresh(
+                    targetWidth = videoWidth,
+                    targetHeight = videoHeight,
+                )
+            } else {
+                null
+            },
+        )
+    }
+    var fadeSnapshotOut by remember { mutableStateOf(false) }
+    var videoFrameObserved by remember { mutableStateOf(false) }
+    val snapshotAlpha by animateFloatAsState(
+        targetValue = when {
+            resumeSnapshot == null -> 0f
+            fadeSnapshotOut -> 0f
+            else -> 1f
+        },
+        animationSpec = tween(durationMillis = if (fadeSnapshotOut) 340 else 0),
+        label = "resumeSnapshotAlpha",
+    )
+
+    fun captureCurrentFrame(textureView: TextureView?) {
+        if (!latestSessionActive) return
+        val view = textureView ?: return
+        if (!view.isAvailable || view.width <= 1 || view.height <= 1) return
+        runCatching {
+            view.bitmap?.let { bitmap ->
+                ProjectionFrameSnapshotStore.save(
+                    bitmap.copy(Bitmap.Config.ARGB_8888, false),
+                )
+            }
+        }
+    }
 
     fun bindSurfaceIfPossible(textureView: TextureView?) {
+        if (!lifecycleSurfaceEnabled) return
         val view = textureView ?: return
         if (!view.isAvailable) return
         val surfaceTexture = view.surfaceTexture ?: return
@@ -407,6 +469,7 @@ private fun ProjectionTextureSurface(
 
     DisposableEffect(Unit) {
         onDispose {
+            captureCurrentFrame(textureViewRef)
             unbindSurfaceFromSession()
             textureSurface?.release()
             textureSurface = null
@@ -419,9 +482,16 @@ private fun ProjectionTextureSurface(
             when (event) {
                 Lifecycle.Event.ON_START,
                 Lifecycle.Event.ON_RESUME,
-                -> bindSurfaceIfPossible(textureViewRef)
+                -> {
+                    lifecycleSurfaceEnabled = true
+                    bindSurfaceIfPossible(textureViewRef)
+                }
 
-                Lifecycle.Event.ON_STOP -> unbindSurfaceFromSession()
+                Lifecycle.Event.ON_STOP -> {
+                    captureCurrentFrame(textureViewRef)
+                    lifecycleSurfaceEnabled = false
+                    unbindSurfaceFromSession()
+                }
                 else -> Unit
             }
         }
@@ -431,88 +501,135 @@ private fun ProjectionTextureSurface(
         }
     }
 
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { context ->
-            TextureView(context).apply {
-                keepScreenOn = true
-                textureViewRef = this
+    LaunchedEffect(lifecycleSurfaceEnabled, sessionActive, videoWidth, videoHeight) {
+        if (!lifecycleSurfaceEnabled || !sessionActive) return@LaunchedEffect
+        if (resumeSnapshot == null) {
+            resumeSnapshot = ProjectionFrameSnapshotStore.peekFresh(
+                targetWidth = videoWidth,
+                targetHeight = videoHeight,
+            )
+        }
+        fadeSnapshotOut = false
+        videoFrameObserved = false
+    }
 
-                fun attachSurface() {
-                    bindSurfaceIfPossible(this)
-                }
+    LaunchedEffect(videoFrameObserved, resumeSnapshot) {
+        if (!videoFrameObserved || resumeSnapshot == null) return@LaunchedEffect
+        delay(120)
+        fadeSnapshotOut = true
+    }
 
-                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                    override fun onSurfaceTextureAvailable(
-                        surface: SurfaceTexture,
-                        width: Int,
-                        height: Int,
-                    ) {
+    LaunchedEffect(fadeSnapshotOut, resumeSnapshot) {
+        if (!fadeSnapshotOut || resumeSnapshot == null) return@LaunchedEffect
+        delay(420)
+        resumeSnapshot = null
+        fadeSnapshotOut = false
+        videoFrameObserved = false
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                TextureView(context).apply {
+                    keepScreenOn = true
+                    textureViewRef = this
+
+                    fun attachSurface() {
+                        bindSurfaceIfPossible(this)
+                    }
+
+                    surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(
+                            surface: SurfaceTexture,
+                            width: Int,
+                            height: Int,
+                        ) {
+                            if (lifecycleSurfaceEnabled) {
+                                attachSurface()
+                            }
+                        }
+
+                        override fun onSurfaceTextureSizeChanged(
+                            surface: SurfaceTexture,
+                            width: Int,
+                            height: Int,
+                        ) {
+                            val videoW = latestVideoWidth
+                            val videoH = latestVideoHeight
+                            if (videoW != null && videoH != null) {
+                                surface.setDefaultBufferSize(videoW, videoH)
+                            }
+                            post {
+                                requestLayout()
+                                invalidate()
+                            }
+                        }
+
+                        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                            captureCurrentFrame(this@apply)
+                            unbindSurfaceFromSession()
+                            textureSurface?.release()
+                            textureSurface = null
+                            textureViewRef = null
+                            return true
+                        }
+
+                        override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
+                            if (resumeSnapshot != null && !videoFrameObserved) {
+                                videoFrameObserved = true
+                            }
+                        }
+                    }
+
+                    if (isAvailable) {
                         attachSurface()
                     }
-
-                    override fun onSurfaceTextureSizeChanged(
-                        surface: SurfaceTexture,
-                        width: Int,
-                        height: Int,
-                    ) {
-                        val videoW = latestVideoWidth
-                        val videoH = latestVideoHeight
-                        if (videoW != null && videoH != null) {
-                            surface.setDefaultBufferSize(videoW, videoH)
-                        }
-                        post {
-                            requestLayout()
-                            invalidate()
-                        }
-                    }
-
-                    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-                        unbindSurfaceFromSession()
-                        textureSurface?.release()
-                        textureSurface = null
-                        textureViewRef = null
-                        return true
-                    }
-
-                    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
                 }
-
-                if (isAvailable) {
-                    attachSurface()
+            },
+            update = { textureView ->
+                textureViewRef = textureView
+                val width = videoWidth
+                val height = videoHeight
+                if (width != null && height != null) {
+                    textureView.surfaceTexture?.setDefaultBufferSize(width, height)
                 }
-            }
-        },
-        update = { textureView ->
-            textureViewRef = textureView
-            val width = videoWidth
-            val height = videoHeight
-            if (width != null && height != null) {
-                textureView.surfaceTexture?.setDefaultBufferSize(width, height)
-            }
-            textureView.post {
-                textureView.requestLayout()
-                textureView.invalidate()
-            }
-            if (textureView.isAvailable) {
-                bindSurfaceIfPossible(textureView)
-            }
-            textureView.setOnTouchListener(
-                if (touchEnabled) {
-                    View.OnTouchListener { view, motionEvent ->
-                        latestViewModel.onTouchEvent(
-                            event = motionEvent,
-                            surfaceWidth = view.width.coerceAtLeast(1),
-                            surfaceHeight = view.height.coerceAtLeast(1),
-                        )
-                        true
-                    }
-                } else {
-                    null
-                },
+                textureView.post {
+                    textureView.requestLayout()
+                    textureView.invalidate()
+                }
+                if (lifecycleSurfaceEnabled && textureView.isAvailable) {
+                    bindSurfaceIfPossible(textureView)
+                }
+                textureView.setOnTouchListener(
+                    if (touchEnabled) {
+                        View.OnTouchListener { view, motionEvent ->
+                            latestViewModel.onTouchEvent(
+                                event = motionEvent,
+                                surfaceWidth = view.width.coerceAtLeast(1),
+                                surfaceHeight = view.height.coerceAtLeast(1),
+                            )
+                            true
+                        }
+                    } else {
+                        null
+                    },
+                )
+            },
+        )
+
+        val snapshot = resumeSnapshot
+        if (snapshot != null && snapshotAlpha > 0f) {
+            Image(
+                bitmap = snapshot.bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(snapshotAlpha)
+                    .zIndex(1f),
             )
-        },
-    )
+        }
+    }
 }
 
 @Composable
@@ -562,9 +679,9 @@ private fun ConnectionOverlay(
                         text = stringResource(id = R.string.carplay_wordmark),
                         style = MaterialTheme.typography.displayLarge.copy(
                             color = Color.White,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = MaterialTheme.typography.displayLarge.fontSize * 2,
-                            lineHeight = 96.sp,
+                            fontWeight = FontWeight.Normal,
+                            fontSize = MaterialTheme.typography.displayLarge.fontSize * 4,
+                            lineHeight = 180.sp,
                         ),
                     )
                 }
@@ -580,7 +697,7 @@ private fun ConnectionOverlay(
                 ) {
                     if (hasDevices) {
                         DeviceSelectionField(
-                            modifier = Modifier.widthIn(min = 325.dp, max = 546.dp),
+                            modifier = Modifier.widthIn(min = 285.dp, max = 446.dp),
                             devices = devices,
                             selectedDevice = selectedDevice,
                             isExpanded = isSelectorExpanded,
@@ -951,7 +1068,12 @@ private fun ProjectionSettingsScreen(
             audioCardWidth + 40.dp
         }
 
-        fun persistRealtimePlayerSettings(updatedPlayerSettings: ProjectionPlayerAudioSettings) {
+        fun persistRealtimePlayerSettings(
+            transform: (ProjectionPlayerAudioSettings) -> ProjectionPlayerAudioSettings,
+        ) {
+            val latestPlayerSettings =
+                workingSettings.playerSettings[workingSettings.selectedPlayer] ?: ProjectionPlayerAudioSettings()
+            val updatedPlayerSettings = transform(latestPlayerSettings)
             val updatedWorking = workingSettings.copy(
                 playerSettings = workingSettings.playerSettings.toMutableMap().apply {
                     put(workingSettings.selectedPlayer, updatedPlayerSettings)
@@ -984,10 +1106,16 @@ private fun ProjectionSettingsScreen(
                         title = if (showDiagnostics) {
                             stringResource(id = R.string.logs_title)
                         } else {
-                            stringResource(id = R.string.settings_sheet_title)
+                            buildString {
+                                append(stringResource(id = R.string.settings_sheet_title))
+                                append(" (")
+                                append(
+                                    deviceName?.takeIf { it.isNotBlank() }
+                                        ?: stringResource(id = R.string.settings_sheet_default_device),
+                                )
+                                append(")")
+                            }
                         },
-                        deviceName = deviceName?.takeIf { it.isNotBlank() }
-                            ?: stringResource(id = R.string.settings_sheet_default_device),
                         saveLabel = stringResource(id = R.string.settings_save),
                         saveEnabled = reconnectRequired && !showDiagnostics,
                         onBack = {
@@ -1073,23 +1201,24 @@ private fun ProjectionSettingsScreen(
                                 modifier = Modifier
                                     .width(audioGroupWidth)
                                     .fillMaxHeight(),
+                                enabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
+                                onEnabledChange = { enabled ->
+                                    workingSettings = workingSettings.copy(
+                                        audioRoute = if (enabled) {
+                                            ProjectionAudioRoute.ADAPTER
+                                        } else {
+                                            ProjectionAudioRoute.CAR_BLUETOOTH
+                                        },
+                                    )
+                                },
                             ) {
                                 AudioProfilesSection(
                                     modifier = Modifier
                                         .width(audioCardWidth)
                                         .fillMaxHeight(),
-                                    isEnabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
                                     playerSettings = workingSettings.playerSettings,
+                                    isEnabled = workingSettings.audioRoute == ProjectionAudioRoute.ADAPTER,
                                     selectedPlayer = workingSettings.selectedPlayer,
-                                    onToggleEnabled = { enabled ->
-                                        workingSettings = workingSettings.copy(
-                                            audioRoute = if (enabled) {
-                                                ProjectionAudioRoute.ADAPTER
-                                            } else {
-                                                ProjectionAudioRoute.CAR_BLUETOOTH
-                                            },
-                                        )
-                                    },
                                     onSelectPlayer = { player ->
                                         workingSettings = workingSettings.copy(selectedPlayer = player)
                                     },
@@ -1102,7 +1231,21 @@ private fun ProjectionSettingsScreen(
                                             .fillMaxHeight(),
                                         selectedPlayer = workingSettings.selectedPlayer,
                                         playerSettings = selectedPlayerSettings,
-                                        onPlayerSettingsChanged = ::persistRealtimePlayerSettings,
+                                        onGainChanged = { value ->
+                                            persistRealtimePlayerSettings { latest ->
+                                                latest.copy(gainMultiplier = value)
+                                            }
+                                        },
+                                        onLoudnessChanged = { value ->
+                                            persistRealtimePlayerSettings { latest ->
+                                                latest.copy(loudnessBoostPercent = value)
+                                            }
+                                        },
+                                        onBassChanged = { value ->
+                                            persistRealtimePlayerSettings { latest ->
+                                                latest.copy(bassBoostPercent = value)
+                                            }
+                                        },
                                     )
 
                                     EqualizerSection(
@@ -1113,26 +1256,27 @@ private fun ProjectionSettingsScreen(
                                         bandsDb = selectedPlayerSettings.eqBandsDb,
                                         preset = selectedPlayerSettings.eqPreset,
                                         onBandChange = { index, value ->
-                                            val newBands = selectedPlayerSettings.eqBandsDb.toMutableList().apply {
-                                                this[index] = value
-                                            }
-                                            persistRealtimePlayerSettings(
-                                                selectedPlayerSettings.copy(
+                                            persistRealtimePlayerSettings { latest ->
+                                                val newBands = latest.eqBandsDb.toMutableList().apply {
+                                                    this[index] = value
+                                                }
+                                                latest.copy(
                                                     eqPreset = ProjectionEqPreset.detect(newBands),
                                                     eqBandsDb = newBands,
-                                                ),
-                                            )
-                                        },
-                                        onPresetSelect = { preset ->
-                                            val updated = if (preset == ProjectionEqPreset.CUSTOM) {
-                                                selectedPlayerSettings.copy(eqPreset = ProjectionEqPreset.CUSTOM)
-                                            } else {
-                                                selectedPlayerSettings.copy(
-                                                    eqPreset = preset,
-                                                    eqBandsDb = preset.bandsDb,
                                                 )
                                             }
-                                            persistRealtimePlayerSettings(updated)
+                                        },
+                                        onPresetSelect = { preset ->
+                                            persistRealtimePlayerSettings { latest ->
+                                                if (preset == ProjectionEqPreset.CUSTOM) {
+                                                    latest.copy(eqPreset = ProjectionEqPreset.CUSTOM)
+                                                } else {
+                                                    latest.copy(
+                                                        eqPreset = preset,
+                                                        eqBandsDb = preset.bandsDb,
+                                                    )
+                                                }
+                                            }
                                         },
                                     )
                                 }
@@ -1148,7 +1292,6 @@ private fun ProjectionSettingsScreen(
 @Composable
 private fun SettingsHeader(
     title: String,
-    deviceName: String,
     saveLabel: String,
     saveEnabled: Boolean,
     secondaryActionLabel: String? = null,
@@ -1179,12 +1322,6 @@ private fun SettingsHeader(
                 text = title,
                 color = Color.White,
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = deviceName,
-                color = Color.White.copy(alpha = 0.62f),
-                style = MaterialTheme.typography.titleMedium,
             )
         }
 
@@ -1217,6 +1354,7 @@ private fun HeaderButton(
     emphasized: Boolean = false,
     large: Boolean = false,
     subtle: Boolean = false,
+    fullWidth: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(if (large) 32.dp else 28.dp),
@@ -1227,7 +1365,7 @@ private fun HeaderButton(
         } else {
             Color.White.copy(alpha = 0.08f)
         },
-        modifier = Modifier.wrapContentWidth(),
+        modifier = if (fullWidth) Modifier.fillMaxWidth() else Modifier.wrapContentWidth(),
     ) {
         Text(
             text = label,
@@ -1242,11 +1380,13 @@ private fun HeaderButton(
                 MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
             },
             modifier = Modifier
+                .then(if (fullWidth) Modifier.fillMaxWidth() else Modifier.wrapContentWidth())
                 .clickable(enabled = enabled, onClick = onClick)
                 .padding(
                     horizontal = if (large) 28.dp else 18.dp,
                     vertical = if (large) 18.dp else 13.dp,
                 ),
+            textAlign = if (fullWidth) TextAlign.Center else TextAlign.Start,
         )
     }
 }
@@ -1254,6 +1394,8 @@ private fun HeaderButton(
 @Composable
 private fun AudioSettingsGroup(
     modifier: Modifier = Modifier,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
     content: @Composable RowScope.() -> Unit,
 ) {
     Surface(
@@ -1267,18 +1409,23 @@ private fun AudioSettingsGroup(
                 .fillMaxSize()
                 .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
-            Text(
-                text = "Звук",
-                color = Color.White,
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Профили, усиление и эквалайзер",
-                color = Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(modifier = Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AdapterToggleSwitch(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                )
+                Text(
+                    text = stringResource(id = R.string.settings_audio_group_title),
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1299,6 +1446,9 @@ private fun AdapterIdentitySection(
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val backgroundExempt = context.isIgnoringBatteryOptimizationsCompat()
+
     SettingsSectionCard(
         modifier = modifier,
         title = "Адаптер",
@@ -1348,8 +1498,45 @@ private fun AdapterIdentitySection(
         HeaderButton(
             label = stringResource(id = R.string.settings_disconnect),
             onClick = onDisconnect,
-            subtle = true,
+            fullWidth = true,
         )
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White.copy(alpha = 0.045f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = stringResource(id = R.string.settings_background_title),
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                )
+                Text(
+                    text = stringResource(id = R.string.settings_background_subtitle),
+                    color = Color.White.copy(alpha = 0.58f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                HeaderButton(
+                    label = stringResource(
+                        id = if (backgroundExempt) {
+                            R.string.settings_background_button_manage
+                        } else {
+                            R.string.settings_background_button_request
+                        },
+                    ),
+                    onClick = { context.openBatteryOptimizationSettings() },
+                    subtle = true,
+                    fullWidth = true,
+                )
+            }
+        }
     }
 }
 
@@ -1358,6 +1545,7 @@ private fun SettingsSectionCard(
     modifier: Modifier = Modifier,
     title: String,
     subtitle: String? = null,
+    headerLeading: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -1371,11 +1559,19 @@ private fun SettingsSectionCard(
                 .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 16.dp),
         ) {
-            Text(
-                text = title,
-                color = Color.White,
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                headerLeading?.invoke()
+                Text(
+                    text = title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                    modifier = Modifier.weight(1f),
+                )
+            }
             if (!subtitle.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -1383,9 +1579,9 @@ private fun SettingsSectionCard(
                     color = Color.White.copy(alpha = 0.6f),
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Spacer(modifier = Modifier.height(20.dp))
-            } else {
                 Spacer(modifier = Modifier.height(16.dp))
+            } else {
+                Spacer(modifier = Modifier.height(12.dp))
             }
             content()
         }
@@ -1395,9 +1591,8 @@ private fun SettingsSectionCard(
 @Composable
 private fun AudioProfilesSection(
     modifier: Modifier = Modifier,
-    isEnabled: Boolean,
     playerSettings: Map<ProjectionAudioPlayerType, ProjectionPlayerAudioSettings>,
-    onToggleEnabled: (Boolean) -> Unit,
+    isEnabled: Boolean,
     selectedPlayer: ProjectionAudioPlayerType,
     onSelectPlayer: (ProjectionAudioPlayerType) -> Unit,
 ) {
@@ -1405,14 +1600,6 @@ private fun AudioProfilesSection(
         modifier = modifier,
         title = stringResource(id = R.string.settings_players_title),
     ) {
-        AdapterToggleRow(
-            title = stringResource(id = R.string.settings_audio_route_adapter),
-            checked = isEnabled,
-            onCheckedChange = onToggleEnabled,
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1480,7 +1667,9 @@ private fun PlayerEnhancementSection(
     modifier: Modifier = Modifier,
     selectedPlayer: ProjectionAudioPlayerType,
     playerSettings: ProjectionPlayerAudioSettings,
-    onPlayerSettingsChanged: (ProjectionPlayerAudioSettings) -> Unit,
+    onGainChanged: (Float) -> Unit,
+    onLoudnessChanged: (Int) -> Unit,
+    onBassChanged: (Int) -> Unit,
 ) {
     SettingsSectionCard(
         modifier = modifier,
@@ -1498,11 +1687,7 @@ private fun PlayerEnhancementSection(
                 valueLabel = formatVolumePercent(playerSettings.gainMultiplier),
                 value = playerSettings.gainMultiplier,
                 valueRange = 0f..3f,
-                onValueChange = {
-                    onPlayerSettingsChanged(
-                        playerSettings.copy(gainMultiplier = it),
-                    )
-                },
+                onValueChange = onGainChanged,
             )
             VerticalControlSlider(
                 modifier = Modifier.weight(1f),
@@ -1510,11 +1695,7 @@ private fun PlayerEnhancementSection(
                 valueLabel = "${playerSettings.loudnessBoostPercent}%",
                 value = playerSettings.loudnessBoostPercent.toFloat(),
                 valueRange = 0f..100f,
-                onValueChange = {
-                    onPlayerSettingsChanged(
-                        playerSettings.copy(loudnessBoostPercent = it.roundToInt()),
-                    )
-                },
+                onValueChange = { onLoudnessChanged(it.roundToInt()) },
             )
             VerticalControlSlider(
                 modifier = Modifier.weight(1f),
@@ -1522,11 +1703,7 @@ private fun PlayerEnhancementSection(
                 valueLabel = "${playerSettings.bassBoostPercent}%",
                 value = playerSettings.bassBoostPercent.toFloat(),
                 valueRange = 0f..100f,
-                onValueChange = {
-                    onPlayerSettingsChanged(
-                        playerSettings.copy(bassBoostPercent = it.roundToInt()),
-                    )
-                },
+                onValueChange = { onBassChanged(it.roundToInt()) },
             )
         }
     }
@@ -1649,6 +1826,7 @@ private fun VerticalEqEditor(
     val labels = remember {
         listOf("32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
     }
+    val bandGap = 6.dp
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -1661,20 +1839,27 @@ private fun VerticalEqEditor(
                 .fillMaxSize()
                 .padding(horizontal = 18.dp, vertical = 12.dp),
         ) {
-            Row(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom,
             ) {
-                labels.forEachIndexed { index, label ->
-                    VerticalEqBand(
-                        width = 72.dp,
-                        label = label,
-                        value = bandsDb.getOrElse(index) { 0f },
-                        onValueChange = { onBandChange(index, it) },
-                    )
+                val bandWidth = ((maxWidth - bandGap * (labels.size - 1)) / labels.size)
+                    .coerceAtMost(72.dp)
+
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(bandGap),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    labels.forEachIndexed { index, label ->
+                        VerticalEqBand(
+                            width = bandWidth,
+                            label = label,
+                            value = bandsDb.getOrElse(index) { 0f },
+                            onValueChange = { onBandChange(index, it) },
+                        )
+                    }
                 }
             }
         }
@@ -1747,15 +1932,14 @@ private fun MicrophoneSection(
     SettingsSectionCard(
         modifier = modifier,
         title = stringResource(id = R.string.settings_mic_title),
+        headerLeading = {
+            AdapterToggleSwitch(
+                checked = isEnabled,
+                onCheckedChange = onToggleEnabled,
+            )
+        },
     ) {
-        AdapterToggleRow(
-            title = stringResource(id = R.string.settings_mic_route_adapter),
-            checked = isEnabled,
-            onCheckedChange = onToggleEnabled,
-        )
-
         if (isEnabled) {
-            Spacer(modifier = Modifier.height(20.dp))
             VerticalControlSlider(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2011,20 +2195,31 @@ private fun AdapterToggleRow(
                 )
             }
 
-            Switch(
+            AdapterToggleSwitch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color.White,
-                    checkedTrackColor = Color(0xFF34C759),
-                    uncheckedThumbColor = Color.White.copy(alpha = 0.94f),
-                    uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
-                    uncheckedBorderColor = Color.Transparent,
-                    checkedBorderColor = Color.Transparent,
-                ),
             )
         }
     }
+}
+
+@Composable
+private fun AdapterToggleSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = Color(0xFF34C759),
+            uncheckedThumbColor = Color.White.copy(alpha = 0.94f),
+            uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
+            uncheckedBorderColor = Color.Transparent,
+            checkedBorderColor = Color.Transparent,
+        ),
+    )
 }
 
 private fun presetLabel(preset: ProjectionEqPreset): String {
@@ -2055,6 +2250,48 @@ private fun playerLabel(player: ProjectionAudioPlayerType): String {
         ProjectionAudioPlayerType.SIRI -> "Siri"
         ProjectionAudioPlayerType.PHONE -> "Разговор"
         ProjectionAudioPlayerType.ALERT -> "Рингтон"
+    }
+}
+
+private fun Context.isIgnoringBatteryOptimizationsCompat(): Boolean {
+    val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        powerManager.isIgnoringBatteryOptimizations(packageName)
+    } else {
+        true
+    }
+}
+
+private fun Context.openBatteryOptimizationSettings() {
+    val intents = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !isIgnoringBatteryOptimizationsCompat()) {
+            add(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+        }
+        add(
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+        )
+        add(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+        )
+    }
+
+    intents.forEach { intent ->
+        try {
+            startActivity(intent)
+            return
+        } catch (_: ActivityNotFoundException) {
+            // Try the next most-generic battery/settings screen.
+        }
     }
 }
 

@@ -39,6 +39,7 @@ class H264Renderer(
     private var configuredWidth = 0
     private var configuredHeight = 0
     private var codec: MediaCodec? = null
+    private var surfaceReattachRequiresCodecRecreation = false
 
     fun attachSurface(surface: Surface) {
         executors.codecOutput.execute {
@@ -46,16 +47,24 @@ class H264Renderer(
                 currentSurface = surface
                 if (codec == null) {
                     createCodecLocked()
+                    surfaceReattachRequiresCodecRecreation = false
+                } else if (surfaceReattachRequiresCodecRecreation) {
+                    log("Surface reattached after detach; recreating codec")
+                    recreateCodecLocked()
+                    surfaceReattachRequiresCodecRecreation = false
                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     try {
                         codec?.setOutputSurface(surface)
                         log("Output surface swapped without codec recreation")
+                        surfaceReattachRequiresCodecRecreation = false
                     } catch (t: Throwable) {
                         logStore.error(SOURCE, "setOutputSurface failed, recreating codec", t)
                         recreateCodecLocked()
+                        surfaceReattachRequiresCodecRecreation = false
                     }
                 } else {
                     recreateCodecLocked()
+                    surfaceReattachRequiresCodecRecreation = false
                 }
             }
             if (ringBuffer.availablePacketsToRead() > 0) {
@@ -67,6 +76,7 @@ class H264Renderer(
     fun detachSurface() {
         synchronized(lock) {
             currentSurface = null
+            surfaceReattachRequiresCodecRecreation = true
         }
         log("Surface detached; waiting for next attach")
     }
@@ -210,6 +220,7 @@ class H264Renderer(
         presentationTimeUs.set(0L)
         frameDurationUs.set(DEFAULT_FRAME_DURATION_US)
         ringBuffer.reset()
+        surfaceReattachRequiresCodecRecreation = false
     }
 
     private fun createCodecCallback(): MediaCodec.Callback = object : MediaCodec.Callback() {

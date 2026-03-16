@@ -130,6 +130,10 @@ class CarPlayViewModel(
         unbindProjectionUiUseCase()
     }
 
+    fun onWindowFocusGained() {
+        setProjectionVideoStreamEnabledUseCase(true)
+    }
+
     fun onConnectClicked() {
         startUsbSessionUseCase()
     }

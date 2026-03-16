@@ -82,7 +82,10 @@ class DongleFlowController(
             phase == ProjectionProtocolPhase.WAITING_RETRY
     }
 
-    fun onSessionReady(config: ProjectionSessionConfig) {
+    fun onSessionReady(
+        config: ProjectionSessionConfig,
+        includeBrandingAssets: Boolean,
+    ) {
         firstVideoPacketSeen = false
         phase = ProjectionProtocolPhase.NONE
         logStore.info(
@@ -102,7 +105,7 @@ class DongleFlowController(
         // Keep the inbound pipe draining before the first init packets are sent.
         // This adapter is sensitive to unread USB traffic during startup.
         delegate.startReadLoop()
-        buildInitMessages(config).forEach(delegate::queueMessage)
+        buildInitMessages(config, includeBrandingAssets).forEach(delegate::queueMessage)
         delegate.startHeartbeat()
         delegate.clearAutoConnectPending()
         transitionTo(ProjectionProtocolPhase.HOST_INIT, "Host init sequence queued")
@@ -176,6 +179,10 @@ class DongleFlowController(
     fun onPhase(phase: Int) {
         when (phase) {
             7 -> {
+                if (isWifiSessionEstablished()) {
+                    logStore.info(SOURCE, "Ignoring phase 7 after Wi-Fi session already established")
+                    return
+                }
                 delegate.clearAutoConnectPending()
                 delegate.stopBleAdvertising()
                 transitionTo(ProjectionProtocolPhase.AIRPLAY_NEGOTIATING, "Phase 7 negotiation started")
@@ -385,18 +392,25 @@ class DongleFlowController(
         }
     }
 
-    private fun buildInitMessages(config: ProjectionSessionConfig): List<ByteArray> = buildList {
+    private fun buildInitMessages(
+        config: ProjectionSessionConfig,
+        includeBrandingAssets: Boolean,
+    ): List<ByteArray> = buildList {
         add(Cpc200Protocol.open(config))
         add(Cpc200Protocol.sendNumber("/tmp/screen_dpi", config.dpi))
         add(Cpc200Protocol.sendBoolean("/tmp/night_mode", config.nightMode))
         add(Cpc200Protocol.sendNumber("/tmp/hand_drive_mode", config.handDriveMode))
         add(Cpc200Protocol.sendBoolean("/tmp/charge_mode", true))
         add(Cpc200Protocol.sendString("/etc/box_name", config.boxName))
-        Cpc200Protocol.oemIcon(config)?.let { add(it) }
-        Cpc200Protocol.icon120(config)?.let { add(it) }
-        Cpc200Protocol.icon180(config)?.let { add(it) }
-        Cpc200Protocol.icon256(config)?.let { add(it) }
-        logStore.info(SOURCE, "Queueing OEM branding: ${config.oemBranding.label} name=${config.oemBranding.name}")
+        if (includeBrandingAssets) {
+            Cpc200Protocol.oemIcon(config)?.let { add(it) }
+            Cpc200Protocol.icon120(config)?.let { add(it) }
+            Cpc200Protocol.icon180(config)?.let { add(it) }
+            Cpc200Protocol.icon256(config)?.let { add(it) }
+            logStore.info(SOURCE, "Queueing OEM branding: ${config.oemBranding.label} name=${config.oemBranding.name}")
+        } else {
+            logStore.info(SOURCE, "Skipping OEM branding assets for reconnect init")
+        }
         add(Cpc200Protocol.boxSettings(config))
         add(Cpc200Protocol.airplayConfig(config))
         add(Cpc200Protocol.command(Cpc200Protocol.Command.SUPPORT_WIFI))
