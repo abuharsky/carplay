@@ -13,9 +13,7 @@ class ServiceStartupReceiver : BroadcastReceiver() {
         intent: Intent,
     ) {
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED,
-            -> if (hasKnownAdapter(context)) {
+            Intent.ACTION_BOOT_COMPLETED -> if (hasKnownAdapter(context)) {
                 val serviceIntent = Intent(context, DongleService::class.java).apply {
                     action = DongleService.ACTION_START_USB
                 }
