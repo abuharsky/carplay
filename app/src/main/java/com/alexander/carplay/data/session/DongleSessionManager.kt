@@ -26,6 +26,7 @@ import com.alexander.carplay.data.usb.DongleConnectionSession
 import com.alexander.carplay.data.usb.UsbTransport
 import com.alexander.carplay.data.video.H264Renderer
 import com.alexander.carplay.domain.model.ProjectionConnectionState
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
 import com.alexander.carplay.domain.model.ProjectionMicRoute
 import com.alexander.carplay.domain.model.ProjectionProtocolPhase
@@ -339,6 +340,13 @@ class DongleSessionManager(
         executors.session.execute {
             applyRuntimeDeviceSettings()
             refreshState()
+        }
+    }
+
+    fun previewRuntimeSettings(settings: ProjectionDeviceSettings) {
+        executors.session.execute {
+            microphoneInputManager.updateGain(settings.micSettings.gainMultiplier)
+            audioStreamManager.updateDeviceSettings(settings)
         }
     }
 

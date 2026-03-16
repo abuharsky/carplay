@@ -3,6 +3,7 @@ package com.alexander.carplay.data.session
 import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSessionPort
@@ -29,6 +30,9 @@ class DongleServiceSessionPort(
     override fun requestReconnect() = connector.requestReconnect()
 
     override fun refreshRuntimeSettings() = connector.refreshRuntimeSettings()
+
+    override fun previewRuntimeSettings(settings: ProjectionDeviceSettings) =
+        connector.previewRuntimeSettings(settings)
 
     override fun setVideoStreamEnabled(enabled: Boolean) = connector.setVideoStreamEnabled(enabled)
 

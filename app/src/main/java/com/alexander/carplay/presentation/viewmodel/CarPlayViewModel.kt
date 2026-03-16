@@ -22,6 +22,7 @@ import com.alexander.carplay.domain.usecase.LoadProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionUiEventsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
+import com.alexander.carplay.domain.usecase.PreviewProjectionRuntimeSettingsUseCase
 import com.alexander.carplay.domain.usecase.RefreshProjectionRuntimeSettingsUseCase
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionAdapterNameUseCase
@@ -79,6 +80,7 @@ class CarPlayViewModel(
     private val unbindProjectionUiUseCase: UnbindProjectionUiUseCase,
     private val requestProjectionReconnectUseCase: RequestProjectionReconnectUseCase,
     private val refreshProjectionRuntimeSettingsUseCase: RefreshProjectionRuntimeSettingsUseCase,
+    private val previewProjectionRuntimeSettingsUseCase: PreviewProjectionRuntimeSettingsUseCase,
     private val setProjectionVideoStreamEnabledUseCase: SetProjectionVideoStreamEnabledUseCase,
     private val loadProjectionDeviceSettingsUseCase: LoadProjectionDeviceSettingsUseCase,
     private val saveProjectionDeviceSettingsUseCase: SaveProjectionDeviceSettingsUseCase,
@@ -203,6 +205,14 @@ class CarPlayViewModel(
         } else {
             refreshProjectionRuntimeSettingsUseCase()
         }
+    }
+
+    fun previewDeviceSettings(settings: ProjectionDeviceSettings) {
+        previewProjectionRuntimeSettingsUseCase(settings)
+    }
+
+    fun restoreSavedRuntimeSettings() {
+        refreshProjectionRuntimeSettingsUseCase()
     }
 
     private fun ProjectionSessionSnapshot.toUiState(logs: List<DiagnosticLogEntry>): CarPlayUiState {

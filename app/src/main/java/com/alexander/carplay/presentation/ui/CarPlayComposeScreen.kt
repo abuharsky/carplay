@@ -1034,11 +1034,17 @@ private fun ProjectionSettingsScreen(
     var savedAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
     var workingAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
     var showDiagnostics by rememberSaveable(deviceId, deviceName) { mutableStateOf(false) }
+    var pendingRealtimePreview by remember(deviceId, deviceName) {
+        mutableStateOf<ProjectionDeviceSettings?>(null)
+    }
 
     val reconnectRequired = remember(workingSettings, savedSettings) {
         workingSettings.audioRoute != savedSettings.audioRoute ||
             workingSettings.micRoute != savedSettings.micRoute
     } || workingAdapterName != savedAdapterName || workingAutoConnectEnabled != savedAutoConnectEnabled
+    val hasUnsavedChanges = workingSettings != savedSettings ||
+        workingAdapterName != savedAdapterName ||
+        workingAutoConnectEnabled != savedAutoConnectEnabled
 
     LaunchedEffect(deviceId, deviceName) {
         val adapterName = viewModel.loadAdapterName()
@@ -1049,7 +1055,22 @@ private fun ProjectionSettingsScreen(
         workingAutoConnectEnabled = autoConnectEnabled
     }
 
-    BackHandler(onBack = onDismiss)
+    LaunchedEffect(pendingRealtimePreview, showDiagnostics) {
+        val previewSettings = pendingRealtimePreview ?: return@LaunchedEffect
+        if (showDiagnostics) return@LaunchedEffect
+        delay(140)
+        viewModel.previewDeviceSettings(previewSettings)
+    }
+
+    fun dismissSettings() {
+        if (workingSettings != savedSettings) {
+            viewModel.restoreSavedRuntimeSettings()
+        }
+        pendingRealtimePreview = null
+        onDismiss()
+    }
+
+    BackHandler(onBack = ::dismissSettings)
 
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
@@ -1068,7 +1089,7 @@ private fun ProjectionSettingsScreen(
             audioCardWidth + 40.dp
         }
 
-        fun persistRealtimePlayerSettings(
+        fun updateRealtimePlayerSettings(
             transform: (ProjectionPlayerAudioSettings) -> ProjectionPlayerAudioSettings,
         ) {
             val latestPlayerSettings =
@@ -1080,13 +1101,9 @@ private fun ProjectionSettingsScreen(
                 },
             )
             workingSettings = updatedWorking
-
-            val realtimePersisted = savedSettings.copy(
-                selectedPlayer = updatedWorking.selectedPlayer,
-                playerSettings = updatedWorking.playerSettings,
-            )
-            savedSettings = realtimePersisted
-            viewModel.saveDeviceSettings(realtimePersisted, reconnectRequired = false)
+            if (!reconnectRequired) {
+                pendingRealtimePreview = updatedWorking
+            }
         }
 
         Surface(
@@ -1117,15 +1134,16 @@ private fun ProjectionSettingsScreen(
                             }
                         },
                         saveLabel = stringResource(id = R.string.settings_save),
-                        saveEnabled = reconnectRequired && !showDiagnostics,
+                        saveEnabled = hasUnsavedChanges && !showDiagnostics,
                         onBack = {
                             if (showDiagnostics) {
                                 showDiagnostics = false
                             } else {
-                                onDismiss()
+                                dismissSettings()
                             }
                         },
                         onSave = {
+                            pendingRealtimePreview = null
                             viewModel.saveAdapterName(workingAdapterName)
                             viewModel.saveAutoConnectEnabled(workingAutoConnectEnabled)
                             savedAdapterName = workingAdapterName
@@ -1191,9 +1209,13 @@ private fun ProjectionSettingsScreen(
                                 },
                                 gainMultiplier = workingSettings.micSettings.gainMultiplier,
                                 onGainChanged = {
-                                    workingSettings = workingSettings.copy(
+                                    val updated = workingSettings.copy(
                                         micSettings = workingSettings.micSettings.copy(gainMultiplier = it),
                                     )
+                                    workingSettings = updated
+                                    if (!reconnectRequired) {
+                                        pendingRealtimePreview = updated
+                                    }
                                 },
                             )
 
@@ -1232,17 +1254,17 @@ private fun ProjectionSettingsScreen(
                                         selectedPlayer = workingSettings.selectedPlayer,
                                         playerSettings = selectedPlayerSettings,
                                         onGainChanged = { value ->
-                                            persistRealtimePlayerSettings { latest ->
+                                            updateRealtimePlayerSettings { latest ->
                                                 latest.copy(gainMultiplier = value)
                                             }
                                         },
                                         onLoudnessChanged = { value ->
-                                            persistRealtimePlayerSettings { latest ->
+                                            updateRealtimePlayerSettings { latest ->
                                                 latest.copy(loudnessBoostPercent = value)
                                             }
                                         },
                                         onBassChanged = { value ->
-                                            persistRealtimePlayerSettings { latest ->
+                                            updateRealtimePlayerSettings { latest ->
                                                 latest.copy(bassBoostPercent = value)
                                             }
                                         },
@@ -1256,7 +1278,7 @@ private fun ProjectionSettingsScreen(
                                         bandsDb = selectedPlayerSettings.eqBandsDb,
                                         preset = selectedPlayerSettings.eqPreset,
                                         onBandChange = { index, value ->
-                                            persistRealtimePlayerSettings { latest ->
+                                            updateRealtimePlayerSettings { latest ->
                                                 val newBands = latest.eqBandsDb.toMutableList().apply {
                                                     this[index] = value
                                                 }
@@ -1267,7 +1289,7 @@ private fun ProjectionSettingsScreen(
                                             }
                                         },
                                         onPresetSelect = { preset ->
-                                            persistRealtimePlayerSettings { latest ->
+                                            updateRealtimePlayerSettings { latest ->
                                                 if (preset == ProjectionEqPreset.CUSTOM) {
                                                     latest.copy(eqPreset = ProjectionEqPreset.CUSTOM)
                                                 } else {

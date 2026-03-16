@@ -3,6 +3,7 @@ package com.alexander.carplay.domain.usecase
 import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSessionPort
@@ -67,6 +68,12 @@ class RefreshProjectionRuntimeSettingsUseCase(
     private val sessionPort: ProjectionSessionPort,
 ) {
     operator fun invoke() = sessionPort.refreshRuntimeSettings()
+}
+
+class PreviewProjectionRuntimeSettingsUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(settings: ProjectionDeviceSettings) = sessionPort.previewRuntimeSettings(settings)
 }
 
 class SetProjectionVideoStreamEnabledUseCase(

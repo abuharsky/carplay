@@ -3,6 +3,7 @@ package com.alexander.carplay.domain.port
 import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import kotlinx.coroutines.flow.SharedFlow
@@ -26,6 +27,8 @@ interface ProjectionSessionPort {
     fun requestReconnect()
 
     fun refreshRuntimeSettings()
+
+    fun previewRuntimeSettings(settings: ProjectionDeviceSettings)
 
     fun setVideoStreamEnabled(enabled: Boolean)
 

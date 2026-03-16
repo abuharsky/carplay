@@ -12,6 +12,23 @@ class DoubleMediaServerPublisher(
     context: Context,
     private val logStore: DiagnosticLogStore,
 ) {
+    private enum class MetadataFieldState {
+        MISSING,
+        BLANK,
+        VALUE,
+    }
+
+    private data class MetadataField(
+        val state: MetadataFieldState,
+        val value: String? = null,
+    ) {
+        val hasValue: Boolean
+            get() = state == MetadataFieldState.VALUE && !value.isNullOrBlank()
+
+        val isBlank: Boolean
+            get() = state == MetadataFieldState.BLANK
+    }
+
     companion object {
         private const val SOURCE = "DoubleMedia"
         private const val PLAYING_ID = 1
@@ -36,25 +53,53 @@ class DoubleMediaServerPublisher(
                 return@execute
             }
 
-            val mediaLyrics = metadata.optStringOrNull("MediaLyrics")
-            val mediaArtistName = metadata.optStringOrNull("MediaArtistName")
-            val mediaSongName = metadata.optStringOrNull("MediaSongName")
-            val mediaAlbumName = metadata.optStringOrNull("MediaAlbumName")
-            val mediaAppName = metadata.optStringOrNull("MediaAPPName")
+            val mediaLyrics = metadata.readStringField("MediaLyrics")
+            val mediaArtistName = metadata.readStringField("MediaArtistName")
+            val mediaSongName = metadata.readStringField("MediaSongName")
+            val mediaAlbumName = metadata.readStringField("MediaAlbumName")
+            val mediaAppName = metadata.readStringField("MediaAPPName")
 
-            if (mediaAppName != null || (mediaLyrics != null && lastLyrics != mediaLyrics)) {
-                lastLyrics = null
-                lastSongName = null
-                lastArtistName = null
-                lastAlbumName = null
-                lastCoverBytes = null
+            val sourceChanged =
+                (mediaAppName.hasValue && mediaAppName.value != lastAppName) ||
+                    (mediaAlbumName.hasValue && mediaAlbumName.value != lastAlbumName)
+            val trackChanged =
+                (mediaLyrics.hasValue && mediaLyrics.value != lastLyrics) ||
+                    (mediaArtistName.hasValue && mediaArtistName.value != lastArtistName) ||
+                    (mediaSongName.hasValue && mediaSongName.value != lastSongName)
+            val trackExplicitlyCleared =
+                mediaLyrics.isBlank ||
+                    mediaArtistName.isBlank ||
+                    mediaSongName.isBlank
+            val sourceChangedWithoutFreshTrack =
+                sourceChanged &&
+                    !mediaLyrics.hasValue &&
+                    !mediaArtistName.hasValue &&
+                    !mediaSongName.hasValue
+
+            if (trackChanged || trackExplicitlyCleared || sourceChangedWithoutFreshTrack) {
+                clearTrackPresentation()
             }
 
-            if (!mediaAppName.isNullOrBlank()) lastAppName = mediaAppName
-            if (!mediaArtistName.isNullOrBlank()) lastArtistName = mediaArtistName
-            if (!mediaSongName.isNullOrBlank()) lastSongName = mediaSongName
-            if (!mediaAlbumName.isNullOrBlank()) lastAlbumName = mediaAlbumName
-            if (!mediaLyrics.isNullOrBlank()) lastLyrics = mediaLyrics
+            mediaAppName.applyTo(
+                currentValue = lastAppName,
+                onChange = { lastAppName = it },
+            )
+            mediaArtistName.applyTo(
+                currentValue = lastArtistName,
+                onChange = { lastArtistName = it },
+            )
+            mediaSongName.applyTo(
+                currentValue = lastSongName,
+                onChange = { lastSongName = it },
+            )
+            mediaAlbumName.applyTo(
+                currentValue = lastAlbumName,
+                onChange = { lastAlbumName = it },
+            )
+            mediaLyrics.applyTo(
+                currentValue = lastLyrics,
+                onChange = { lastLyrics = it },
+            )
 
             publishCurrentState()
         }
@@ -102,8 +147,35 @@ class DoubleMediaServerPublisher(
         }
     }
 
-    private fun JSONObject.optStringOrNull(key: String): String? {
-        if (!has(key) || isNull(key)) return null
-        return optString(key).trim().takeIf { it.isNotEmpty() }
+    private fun clearTrackPresentation() {
+        lastLyrics = null
+        lastSongName = null
+        lastArtistName = null
+        lastCoverBytes = null
+    }
+
+    private fun MetadataField.applyTo(
+        currentValue: String?,
+        onChange: (String?) -> Unit,
+    ) {
+        when (state) {
+            MetadataFieldState.MISSING -> Unit
+            MetadataFieldState.BLANK -> onChange(null)
+            MetadataFieldState.VALUE -> {
+                if (value != currentValue) {
+                    onChange(value)
+                }
+            }
+        }
+    }
+
+    private fun JSONObject.readStringField(key: String): MetadataField {
+        if (!has(key) || isNull(key)) return MetadataField(MetadataFieldState.MISSING)
+        val value = optString(key).trim()
+        return if (value.isEmpty()) {
+            MetadataField(MetadataFieldState.BLANK)
+        } else {
+            MetadataField(MetadataFieldState.VALUE, value)
+        }
     }
 }

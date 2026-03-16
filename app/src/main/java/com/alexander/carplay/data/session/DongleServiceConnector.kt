@@ -11,6 +11,7 @@ import android.view.Surface
 import androidx.core.content.ContextCompat
 import com.alexander.carplay.data.logging.DiagnosticLogStore
 import com.alexander.carplay.domain.model.ProjectionConnectionState
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.platform.service.DongleService
@@ -164,6 +165,11 @@ class DongleServiceConnector(
     fun refreshRuntimeSettings() {
         ensureServiceStarted()
         binder?.refreshRuntimeSettings()
+    }
+
+    fun previewRuntimeSettings(settings: ProjectionDeviceSettings) {
+        ensureServiceStarted()
+        binder?.previewRuntimeSettings(settings)
     }
 
     fun setVideoStreamEnabled(enabled: Boolean) {

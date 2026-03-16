@@ -18,6 +18,7 @@ import com.alexander.carplay.data.session.DongleSessionManager
 import com.alexander.carplay.data.usb.AndroidUsbTransport
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
 import com.alexander.carplay.domain.model.ProjectionConnectionState
+import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import kotlinx.coroutines.CoroutineScope
@@ -192,6 +193,10 @@ class DongleService : Service() {
 
         fun refreshRuntimeSettings() {
             sessionManager.refreshRuntimeSettings()
+        }
+
+        fun previewRuntimeSettings(settings: ProjectionDeviceSettings) {
+            sessionManager.previewRuntimeSettings(settings)
         }
 
         fun setVideoStreamEnabled(enabled: Boolean) {

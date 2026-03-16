@@ -48,6 +48,7 @@ class AudioStreamManager(
         val equalizer: Equalizer?,
         val bassBoost: BassBoost?,
         val loudnessEnhancer: LoudnessEnhancer?,
+        var appliedSettings: ProjectionPlayerAudioSettings? = null,
     )
 
     private data class VolumeDirective(
@@ -422,6 +423,8 @@ class AudioStreamManager(
         managedTrack: ManagedTrack,
         settings: ProjectionPlayerAudioSettings,
     ) {
+        if (managedTrack.appliedSettings == settings) return
+
         managedTrack.bassBoost?.let { bassBoost ->
             runCatching {
                 val strength = (settings.bassBoostPercent * 10).coerceIn(0, 1000)
@@ -463,6 +466,8 @@ class AudioStreamManager(
                 logStore.error(SOURCE, "Unable to apply equalizer settings", error)
             }
         }
+
+        managedTrack.appliedSettings = settings
     }
 
     private fun applyGainIfNeeded(
