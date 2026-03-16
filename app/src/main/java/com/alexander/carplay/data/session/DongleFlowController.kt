@@ -340,10 +340,9 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.WIFI_CONNECTED -> {
-                delegate.updateState(
-                    state = ProjectionConnectionState.CONNECTING,
-                    protocolPhase = ProjectionProtocolPhase.CARPLAY_SESSION_SETUP,
-                    message = "Phone connected to adapter Wi-Fi",
+                logStore.info(
+                    SOURCE,
+                    "Ignoring informational wifiConnected until Plugged/Phase 7 establishes session setup",
                 )
             }
 

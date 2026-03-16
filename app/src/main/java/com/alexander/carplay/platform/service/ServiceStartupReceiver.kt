@@ -14,9 +14,7 @@ class ServiceStartupReceiver : BroadcastReceiver() {
     ) {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED -> if (hasKnownAdapter(context)) {
-                val serviceIntent = Intent(context, DongleService::class.java).apply {
-                    action = DongleService.ACTION_START_USB
-                }
+                val serviceIntent = Intent(context, DongleService::class.java)
                 ContextCompat.startForegroundService(context, serviceIntent)
             }
         }

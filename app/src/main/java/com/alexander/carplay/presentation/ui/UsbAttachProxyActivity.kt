@@ -28,9 +28,7 @@ class UsbAttachProxyActivity : AppCompatActivity() {
     }
 
     private fun startDongleService() {
-        val serviceIntent = Intent(this, DongleService::class.java).apply {
-            action = DongleService.ACTION_START_USB
-        }
+        val serviceIntent = Intent(this, DongleService::class.java)
         ContextCompat.startForegroundService(this, serviceIntent)
     }
 }

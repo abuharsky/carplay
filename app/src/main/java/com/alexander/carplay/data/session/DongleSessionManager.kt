@@ -497,8 +497,12 @@ class DongleSessionManager(
         reason: String,
     ) {
         val gateWasOpen = isVehicleGateOpen()
+        val wasVehicleActive = vehicleActive
         automotivePowerSnapshot = snapshot
         vehicleActive = AutomotivePowerPolicy.isVehicleActive(snapshot)
+        if (wasVehicleActive && !vehicleActive) {
+            clearManualVehicleGateBypass("vehicle became inactive")
+        }
         val gateIsOpen = isVehicleGateOpen()
 
         if (sessionMode != SessionMode.USB || shuttingDown) {
@@ -520,6 +524,8 @@ class DongleSessionManager(
         if (!started) return
 
         if (!gateIsOpen) {
+            clearAutoConnectPending()
+            stopBleAdvertising()
             if (currentSession != null) {
                 closeCurrentSession("vehicle inactive: $reason", scheduleReconnect = false)
             }
@@ -746,6 +752,10 @@ class DongleSessionManager(
 
     private fun requestAutoConnect(reason: String) {
         if (currentSession == null || !started || shuttingDown) return
+        if (!isVehicleGateOpen()) {
+            logStore.info(SOURCE, "Auto-connect suppressed while vehicle gate is closed: $reason")
+            return
+        }
         emitAutoConnectRequest()
         awaitingAutoConnectResult = true
         logStore.info(
@@ -762,6 +772,10 @@ class DongleSessionManager(
 
     private fun startBleAdvertising(reason: String) {
         if (currentSession == null || !started || shuttingDown) return
+        if (!isVehicleGateOpen()) {
+            logStore.info(SOURCE, "BLE advertising suppressed while vehicle gate is closed: $reason")
+            return
+        }
         if (bleAdvertisingActive) return
         bleAdvertisingActive = true
         queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.START_BLE_ADV))
@@ -868,6 +882,7 @@ class DongleSessionManager(
     private fun shouldAutoConnectKnownDevices(): Boolean {
         if (!settingsStore.isAutoConnectEnabled()) return false
         if (knownDevices.isEmpty()) return false
+        if (!AutomotivePowerPolicy.isIgnitionOnForAutoConnect(automotivePowerSnapshot)) return false
         if (pendingConnectionDeviceId != null) return true
         return !requiresManualDeviceSelection()
     }
@@ -1647,6 +1662,12 @@ class DongleSessionManager(
             SOURCE,
             "Manual vehicle-gate bypass armed for ${MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS}ms: $reason",
         )
+    }
+
+    private fun clearManualVehicleGateBypass(reason: String) {
+        if (manualVehicleGateBypassUntilMs <= 0L) return
+        manualVehicleGateBypassUntilMs = 0L
+        logStore.info(SOURCE, "Manual vehicle-gate bypass cleared: $reason")
     }
 
     private fun isVehicleGateOpen(): Boolean {
