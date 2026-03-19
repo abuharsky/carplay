@@ -840,7 +840,7 @@ class DongleSessionManager(
         val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(device.id)
         if (normalizedId.isBlank()) return
         val existing = knownDevices[normalizedId]
-        knownDevices[normalizedId] = if (existing == null) {
+        val mergedDevice = if (existing == null) {
             device.copy(id = normalizedId)
         } else {
             existing.copy(
@@ -849,6 +849,8 @@ class DongleSessionManager(
                 index = device.index ?: existing.index,
             )
         }
+        knownDevices[normalizedId] = mergedDevice
+        mergedDevice.name?.let { settingsStore.setCachedDeviceName(normalizedId, it) }
     }
 
     private fun rememberKnownDevices(devices: List<DongleKnownDevice>) {
@@ -882,7 +884,7 @@ class DongleSessionManager(
     private fun shouldAutoConnectKnownDevices(): Boolean {
         if (!settingsStore.isAutoConnectEnabled()) return false
         if (knownDevices.isEmpty()) return false
-        if (!AutomotivePowerPolicy.isIgnitionOnForAutoConnect(automotivePowerSnapshot)) return false
+        if (!AutomotivePowerPolicy.isReadyForAutoConnect(automotivePowerSnapshot)) return false
         if (pendingConnectionDeviceId != null) return true
         return !requiresManualDeviceSelection()
     }
@@ -916,7 +918,7 @@ class DongleSessionManager(
             ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
             ?.ifBlank { null }
             ?: return null
-        return knownDevices[normalizedId]?.name
+        return knownDevices[normalizedId]?.name ?: settingsStore.getCachedDeviceName(normalizedId)
     }
 
     private fun buildDeviceSnapshots(): List<ProjectionDeviceSnapshot> {
@@ -945,7 +947,7 @@ class DongleSessionManager(
                 val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(device.id)
                 ProjectionDeviceSnapshot(
                     id = normalizedId,
-                    name = device.name ?: normalizedId,
+                    name = device.name ?: settingsStore.getCachedDeviceName(normalizedId) ?: normalizedId,
                     type = device.type,
                     isAvailable = normalizedId in availableDeviceIds,
                     isActive = normalizedId == currentSessionDeviceId,
@@ -967,7 +969,11 @@ class DongleSessionManager(
             ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
             ?.ifBlank { null }
             ?: return "-"
-        val knownDevice = knownDevices[normalizedId] ?: return normalizedId
+        val knownDevice = knownDevices[normalizedId]
+        if (knownDevice == null) {
+            val cachedName = settingsStore.getCachedDeviceName(normalizedId) ?: return normalizedId
+            return "$normalizedId name=$cachedName"
+        }
         return buildString {
             append(normalizedId)
             knownDevice.name?.let { append(" name=").append(it) }
@@ -1055,6 +1061,7 @@ class DongleSessionManager(
             val activeId = Cpc200Protocol.normalizeDeviceIdentifier(snapshot.activeDeviceId)
             catalogActiveDeviceId = activeId
             settingsStore.setLastConnectedDeviceId(activeId)
+            snapshot.activeDeviceName?.let { settingsStore.setCachedDeviceName(activeId, it) }
             if (!isProjectionSessionEstablished() && currentSelectedDeviceId == null && pendingConnectionDeviceId == null) {
                 applyRuntimeDeviceSettings()
             }

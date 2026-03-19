@@ -13,8 +13,8 @@ data class AutomotivePowerSnapshot(
 )
 
 object AutomotivePowerPolicy {
-    fun isIgnitionOnForAutoConnect(snapshot: AutomotivePowerSnapshot): Boolean {
-        return snapshot.accState == PowerConstant.ACC_START
+    fun isReadyForAutoConnect(snapshot: AutomotivePowerSnapshot): Boolean {
+        return isVehicleActive(snapshot)
     }
 
     fun isVehicleActive(snapshot: AutomotivePowerSnapshot): Boolean {

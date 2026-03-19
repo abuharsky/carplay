@@ -34,4 +34,27 @@ class AutomotivePowerPolicyTest {
         assertThat(AutomotivePowerPolicy.isVehicleActive(activeSnapshot)).isTrue()
         assertThat(AutomotivePowerPolicy.isVehicleActive(inactiveSnapshot)).isFalse()
     }
+
+    @Test
+    fun `auto connect is allowed when ACC is on`() {
+        val snapshot = AutomotivePowerSnapshot(accState = PowerConstant.ACC_ON)
+
+        assertThat(AutomotivePowerPolicy.isReadyForAutoConnect(snapshot)).isTrue()
+    }
+
+    @Test
+    fun `auto connect is allowed when ACC is starting`() {
+        val snapshot = AutomotivePowerSnapshot(accState = PowerConstant.ACC_START)
+
+        assertThat(AutomotivePowerPolicy.isReadyForAutoConnect(snapshot)).isTrue()
+    }
+
+    @Test
+    fun `auto connect uses power state fallback when ACC is unavailable`() {
+        val activeSnapshot = AutomotivePowerSnapshot(powerState = PowerConstant.POWER_WORKING)
+        val inactiveSnapshot = AutomotivePowerSnapshot(powerState = PowerConstant.POWER_UNWOKGING)
+
+        assertThat(AutomotivePowerPolicy.isReadyForAutoConnect(activeSnapshot)).isTrue()
+        assertThat(AutomotivePowerPolicy.isReadyForAutoConnect(inactiveSnapshot)).isFalse()
+    }
 }

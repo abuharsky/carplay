@@ -18,4 +18,11 @@ interface ProjectionSettingsPort {
     fun getLastConnectedDeviceId(): String?
 
     fun setLastConnectedDeviceId(deviceId: String?)
+
+    fun getCachedDeviceName(deviceId: String?): String?
+
+    fun setCachedDeviceName(
+        deviceId: String?,
+        name: String?,
+    )
 }

@@ -24,6 +24,7 @@ class SharedPreferencesProjectionSettingsStore(
         private const val KEY_ADAPTER_NAME = "adapter_name"
         private const val KEY_AUTO_CONNECT_ENABLED = "auto_connect_enabled"
         private const val KEY_PREFIX = "device:"
+        private const val KEY_DEVICE_NAME_CACHE_PREFIX = "device_name:"
         private const val DEFAULT_ADAPTER_NAME_PREFIX = "Carlink-"
         private const val DEFAULT_ADAPTER_NAME_DIGITS = 4
         private const val MAX_ADAPTER_NAME_LENGTH = 16
@@ -75,8 +76,32 @@ class SharedPreferencesProjectionSettingsStore(
             .apply()
     }
 
+    override fun getCachedDeviceName(deviceId: String?): String? {
+        val normalizedId = normalizeDeviceId(deviceId)
+        return prefs.getString(KEY_DEVICE_NAME_CACHE_PREFIX + normalizedId, null)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    override fun setCachedDeviceName(
+        deviceId: String?,
+        name: String?,
+    ) {
+        val normalizedId = normalizeDeviceId(deviceId)
+        val normalizedName = normalizeCachedDeviceName(name)
+        prefs.edit()
+            .putString(KEY_DEVICE_NAME_CACHE_PREFIX + normalizedId, normalizedName)
+            .apply()
+    }
+
     private fun normalizeDeviceId(deviceId: String?): String {
         return deviceId?.trim()?.takeIf { it.isNotEmpty() } ?: ProjectionDeviceSettings.DEFAULT_DEVICE_ID
+    }
+
+    private fun normalizeCachedDeviceName(name: String?): String? {
+        return name
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
     }
 
     private fun normalizeAdapterName(name: String?): String {
