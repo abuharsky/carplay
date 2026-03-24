@@ -2,6 +2,7 @@ package com.alexander.carplay.data.session
 
 import android.content.Context
 import android.hardware.usb.UsbDevice
+import android.content.ComponentCallbacks2
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.Surface
@@ -179,7 +180,12 @@ class DongleSessionManager(
     private var shuttingDown = false
     private var sessionMode = SessionMode.USB
     private var surfaceAttached = false
-    private var sessionConfig = ProjectionSessionConfig.fromContext(appContext, settingsStore.getAdapterName())
+    private var sessionConfig = ProjectionSessionConfig.fromContext(
+        context = appContext,
+        adapterName = settingsStore.getAdapterName(),
+        climatePanelEnabled = settingsStore.isClimatePanelEnabled(),
+        dpi = settingsStore.getAdapterDpi(),
+    )
     private var currentSession: DongleConnectionSession? = null
     private var currentDevice: UsbDevice? = null
     private var currentConnectionLabel: String? = null
@@ -204,6 +210,7 @@ class DongleSessionManager(
     private var lastHeartbeatEchoAtMs = 0L
     private var writeLoopStarted = false
     private var videoStreamEnabled = false
+    private var backgroundVideoDropLogged = false
     private var automotivePowerSnapshot = AutomotivePowerSnapshot()
     private var vehicleActive = true
     private var manualVehicleGateBypassUntilMs = 0L
@@ -426,6 +433,7 @@ class DongleSessionManager(
 
     fun attachSurface(surface: Surface) {
         surfaceAttached = true
+        backgroundVideoDropLogged = false
         logStore.info(SOURCE, "Projection surface attached")
         renderer.attachSurface(surface)
         if (currentSession != null && (_state.value.videoWidth != null || currentPhoneType != null)) {
@@ -473,6 +481,18 @@ class DongleSessionManager(
                 },
                 surfaceAttached = false,
             )
+        }
+    }
+
+    fun onCriticalMemoryPressure() {
+        executors.session.execute {
+            if (surfaceAttached) {
+                logStore.info(SOURCE, "Critical memory pressure observed, but surface is attached; keeping active video path")
+                return@execute
+            }
+
+            logStore.info(SOURCE, "Critical memory pressure without UI surface; trimming video decoder and buffers")
+            renderer.trimMemory("critical memory pressure without surface")
         }
     }
 
@@ -524,10 +544,15 @@ class DongleSessionManager(
         if (!started) return
 
         if (!gateIsOpen) {
+            cancelReconnect()
             clearAutoConnectPending()
             stopBleAdvertising()
             if (currentSession != null) {
-                closeCurrentSession("vehicle inactive: $reason", scheduleReconnect = false)
+                logStore.info(
+                    SOURCE,
+                    "Vehicle became inactive while projection session is still alive; keeping current session until it ends naturally | ${AutomotivePowerPolicy.describeSnapshot(snapshot)}",
+                )
+                return
             }
             updateWaitingForVehicleState(reason)
             return
@@ -818,6 +843,7 @@ class DongleSessionManager(
         awaitingAutoConnectResult = false
         lastInboundActivityAtMs = 0L
         lastHeartbeatEchoAtMs = 0L
+        backgroundVideoDropLogged = false
         microphoneInputManager.stop("projection runtime reset: $reason")
         audioStreamManager.release()
         audioStreamManager.updateDeviceSettings(null)
@@ -890,16 +916,57 @@ class DongleSessionManager(
     }
 
     private fun buildSessionConfig(): ProjectionSessionConfig {
-        val baseConfig = ProjectionSessionConfig.fromContext(appContext, settingsStore.getAdapterName())
+        val baseConfig = ProjectionSessionConfig.fromContext(
+            context = appContext,
+            adapterName = settingsStore.getAdapterName(),
+            climatePanelEnabled = settingsStore.isClimatePanelEnabled(),
+            dpi = settingsStore.getAdapterDpi(),
+        )
         val preferredDeviceId = pendingConnectionDeviceId
             ?: currentSessionDeviceId
+            ?: currentPeerBluetoothDeviceId
             ?: currentSelectedDeviceId
+            ?: catalogActiveDeviceId
             ?: settingsStore.getLastConnectedDeviceId()
         val deviceSettings = settingsStore.getSettings(preferredDeviceId)
-
-        return baseConfig.copy(
+        val resolvedConfig = baseConfig.copy(
             useBluetoothAudio = deviceSettings.audioRoute == ProjectionAudioRoute.CAR_BLUETOOTH,
             useAdapterMic = deviceSettings.micRoute == ProjectionMicRoute.ADAPTER,
+        )
+        logStore.info(
+            SOURCE,
+            "Session config resolved: device=${describeKnownDevice(preferredDeviceId)} " +
+                "audio=${deviceSettings.audioRoute.name} mic=${deviceSettings.micRoute.name} " +
+                "screen=${resolvedConfig.width}x${resolvedConfig.height} dpi=${resolvedConfig.dpi}",
+        )
+        return resolvedConfig
+    }
+
+    private fun currentMicRouteCommand(): Int {
+        return if (sessionConfig.useAdapterMic) {
+            Cpc200Protocol.Command.MIC
+        } else {
+            Cpc200Protocol.Command.USE_PHONE_MIC
+        }
+    }
+
+    private fun currentAudioRouteCommand(): Int {
+        return if (sessionConfig.useBluetoothAudio) {
+            Cpc200Protocol.Command.USE_BLUETOOTH_AUDIO
+        } else {
+            Cpc200Protocol.Command.USE_BOX_TRANS_AUDIO
+        }
+    }
+
+    private fun reapplySessionRouting(reason: String) {
+        val micCommand = currentMicRouteCommand()
+        val audioCommand = currentAudioRouteCommand()
+        queueOutbound(Cpc200Protocol.command(micCommand))
+        queueOutbound(Cpc200Protocol.command(audioCommand))
+        logStore.info(
+            SOURCE,
+            "Re-applied session routing ($reason): mic=${Cpc200Protocol.describeCommand(micCommand)} " +
+                "audio=${Cpc200Protocol.describeCommand(audioCommand)}",
         )
     }
 
@@ -1272,11 +1339,21 @@ class DongleSessionManager(
         if (currentSession !== session) return
 
         val safeMeta = Cpc200Protocol.parseVideoMeta(packet, 0)
-        renderer.processDataDirect(
-            payloadLength,
-            Cpc200Protocol.VIDEO_SUB_HEADER_SIZE,
-        ) { target, offset ->
-            System.arraycopy(packet, 0, target, offset, payloadLength)
+        if (surfaceAttached) {
+            renderer.processDataDirect(
+                payloadLength,
+                Cpc200Protocol.VIDEO_SUB_HEADER_SIZE,
+            ) { target, offset ->
+                System.arraycopy(packet, 0, target, offset, payloadLength)
+            }
+        } else {
+            if (!backgroundVideoDropLogged) {
+                backgroundVideoDropLogged = true
+                logStore.info(
+                    SOURCE,
+                    "Dropping video packets while projection surface is detached (${safeMeta.width}x${safeMeta.height})",
+                )
+            }
         }
         markInboundActivity("Video ${safeMeta.width}x${safeMeta.height}")
         renderer.updateVideoFormat(safeMeta.width, safeMeta.height)
@@ -1340,11 +1417,13 @@ class DongleSessionManager(
                 val pluggedInfo = Cpc200Protocol.parsePlugged(safePayload)
                 currentPhoneType = pluggedInfo.phoneType
                 rememberSessionDevice(resolveSessionDeviceCandidateId(), "plugged")
+                sessionConfig = buildSessionConfig()
                 logStore.info(
                     SOURCE,
                     "Phone plugged: ${Cpc200Protocol.describePhoneType(pluggedInfo.phoneType)}, wifi=${pluggedInfo.wifiState}",
                 )
                 flowController.onPlugged(pluggedInfo)
+                reapplySessionRouting("plugged")
                 syncVideoFocus("plugged")
             }
 
@@ -1569,6 +1648,11 @@ class DongleSessionManager(
         val replayPath = replayCapturePath
         closeCurrentSession(reason, scheduleReconnect = false)
         if (!started || shuttingDown) return
+        sessionConfig = buildSessionConfig()
+        logStore.info(
+            SOURCE,
+            "Reconnect session config rebuilt: screen=${sessionConfig.width}x${sessionConfig.height} dpi=${sessionConfig.dpi} climatePanel=${sessionConfig.climatePanelEnabled}",
+        )
         when (restartMode) {
             SessionMode.USB -> connectOrRequestPermission(reason)
             SessionMode.REPLAY -> replayPath?.let(::openReplaySession)
@@ -1728,6 +1812,7 @@ class DongleSessionManager(
             } else {
                 ProjectionMicRoute.PHONE
             },
+            appliedClimatePanelEnabled = sessionConfig.climatePanelEnabled,
             videoWidth = videoWidth,
             videoHeight = videoHeight,
             surfaceAttached = surfaceAttached,

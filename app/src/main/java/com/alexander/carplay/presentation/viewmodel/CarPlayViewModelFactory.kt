@@ -29,11 +29,16 @@ class CarPlayViewModelFactory(
             saveProjectionAdapterNameUseCase = appContainer.saveProjectionAdapterNameUseCase,
             loadProjectionAutoConnectUseCase = appContainer.loadProjectionAutoConnectUseCase,
             saveProjectionAutoConnectUseCase = appContainer.saveProjectionAutoConnectUseCase,
+            loadProjectionAdapterDpiUseCase = appContainer.loadProjectionAdapterDpiUseCase,
+            saveProjectionAdapterDpiUseCase = appContainer.saveProjectionAdapterDpiUseCase,
+            loadProjectionClimatePanelEnabledUseCase = appContainer.loadProjectionClimatePanelEnabledUseCase,
+            saveProjectionClimatePanelEnabledUseCase = appContainer.saveProjectionClimatePanelEnabledUseCase,
             selectProjectionDeviceUseCase = appContainer.selectProjectionDeviceUseCase,
             cancelProjectionDeviceConnectionUseCase = appContainer.cancelProjectionDeviceConnectionUseCase,
             attachProjectionSurfaceUseCase = appContainer.attachProjectionSurfaceUseCase,
             detachProjectionSurfaceUseCase = appContainer.detachProjectionSurfaceUseCase,
             sendProjectionMotionUseCase = appContainer.sendProjectionMotionUseCase,
+            refreshSeatAutoComfort = { appContainer.seatAutoComfortController.refreshNow("device settings saved") },
         ) as T
     }
 }

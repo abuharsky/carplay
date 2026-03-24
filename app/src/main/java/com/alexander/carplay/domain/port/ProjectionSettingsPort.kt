@@ -15,6 +15,14 @@ interface ProjectionSettingsPort {
 
     fun setAutoConnectEnabled(enabled: Boolean)
 
+    fun isClimatePanelEnabled(): Boolean
+
+    fun setClimatePanelEnabled(enabled: Boolean)
+
+    fun getAdapterDpi(): Int
+
+    fun setAdapterDpi(dpi: Int)
+
     fun getLastConnectedDeviceId(): String?
 
     fun setLastConnectedDeviceId(deviceId: String?)

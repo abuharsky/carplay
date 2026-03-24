@@ -26,6 +26,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CarPlay">
 
+        <uses-library
+            android:name="android.car"
+            android:required="false" />
+
         <activity
             android:name=".presentation.ui.CarPlayActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"

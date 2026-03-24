@@ -12,6 +12,7 @@ data class ProjectionSessionSnapshot(
     val devices: List<ProjectionDeviceSnapshot> = emptyList(),
     val appliedAudioRoute: ProjectionAudioRoute = ProjectionAudioRoute.ADAPTER,
     val appliedMicRoute: ProjectionMicRoute = ProjectionMicRoute.ADAPTER,
+    val appliedClimatePanelEnabled: Boolean = false,
     val videoWidth: Int? = null,
     val videoHeight: Int? = null,
     val surfaceAttached: Boolean = false,

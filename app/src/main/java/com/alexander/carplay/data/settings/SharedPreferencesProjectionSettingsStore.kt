@@ -5,12 +5,15 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.provider.Settings
 import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
+import com.alexander.carplay.domain.model.ProjectionDisplayDpi
 import com.alexander.carplay.domain.model.ProjectionAudioRoute
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionEqPreset
 import com.alexander.carplay.domain.model.ProjectionMicRoute
 import com.alexander.carplay.domain.model.ProjectionMicSettings
 import com.alexander.carplay.domain.model.ProjectionPlayerAudioSettings
+import com.alexander.carplay.domain.model.ProjectionSeatAutoComfortSettings
+import com.alexander.carplay.domain.model.ProjectionSeatAutoModeSettings
 import com.alexander.carplay.domain.port.ProjectionSettingsPort
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +26,8 @@ class SharedPreferencesProjectionSettingsStore(
         private const val KEY_LAST_CONNECTED_DEVICE = "last_connected_device"
         private const val KEY_ADAPTER_NAME = "adapter_name"
         private const val KEY_AUTO_CONNECT_ENABLED = "auto_connect_enabled"
+        private const val KEY_CLIMATE_PANEL_ENABLED = "climate_panel_enabled"
+        private const val KEY_ADAPTER_DPI = "adapter_dpi"
         private const val KEY_PREFIX = "device:"
         private const val KEY_DEVICE_NAME_CACHE_PREFIX = "device_name:"
         private const val DEFAULT_ADAPTER_NAME_PREFIX = "Carlink-"
@@ -65,6 +70,26 @@ class SharedPreferencesProjectionSettingsStore(
     override fun setAutoConnectEnabled(enabled: Boolean) {
         prefs.edit()
             .putBoolean(KEY_AUTO_CONNECT_ENABLED, enabled)
+            .apply()
+    }
+
+    override fun isClimatePanelEnabled(): Boolean = prefs.getBoolean(KEY_CLIMATE_PANEL_ENABLED, true)
+
+    override fun setClimatePanelEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_CLIMATE_PANEL_ENABLED, enabled)
+            .apply()
+    }
+
+    override fun getAdapterDpi(): Int {
+        return ProjectionDisplayDpi.normalize(
+            prefs.getInt(KEY_ADAPTER_DPI, ProjectionDisplayDpi.DEFAULT),
+        )
+    }
+
+    override fun setAdapterDpi(dpi: Int) {
+        prefs.edit()
+            .putInt(KEY_ADAPTER_DPI, ProjectionDisplayDpi.normalize(dpi))
             .apply()
     }
 
@@ -143,6 +168,8 @@ class SharedPreferencesProjectionSettingsStore(
                 })
             }
             put("players", players)
+            put("driverSeatAutoComfort", encodeSeatAutoComfortSettings(settings.driverSeatAutoComfort))
+            put("passengerSeatAutoComfort", encodeSeatAutoComfortSettings(settings.passengerSeatAutoComfort))
         }
     }
 
@@ -174,6 +201,14 @@ class SharedPreferencesProjectionSettingsStore(
                 gainMultiplier = json.optDouble("micGainMultiplier", defaults.micSettings.gainMultiplier.toDouble()).toFloat(),
             ),
             playerSettings = playerSettings,
+            driverSeatAutoComfort = decodeSeatAutoComfortSettings(
+                json.optJSONObject("driverSeatAutoComfort"),
+                defaults.driverSeatAutoComfort,
+            ),
+            passengerSeatAutoComfort = decodeSeatAutoComfortSettings(
+                json.optJSONObject("passengerSeatAutoComfort"),
+                defaults.passengerSeatAutoComfort,
+            ),
         )
     }
 
@@ -197,6 +232,46 @@ class SharedPreferencesProjectionSettingsStore(
                 ?.let { runCatching { ProjectionEqPreset.valueOf(it) }.getOrNull() }
                 ?: ProjectionEqPreset.detect(eqBands),
             eqBandsDb = eqBands,
+        )
+    }
+
+    private fun encodeSeatAutoComfortSettings(settings: ProjectionSeatAutoComfortSettings): JSONObject {
+        return JSONObject().apply {
+            put("heat", encodeSeatAutoModeSettings(settings.heat))
+            put("vent", encodeSeatAutoModeSettings(settings.vent))
+        }
+    }
+
+    private fun encodeSeatAutoModeSettings(settings: ProjectionSeatAutoModeSettings): JSONObject {
+        return JSONObject().apply {
+            put("enabled", settings.enabled)
+            put("thresholdC", settings.thresholdC)
+            put("startLevel", settings.startLevel)
+            put("durationMinutes", settings.durationMinutes)
+        }
+    }
+
+    private fun decodeSeatAutoComfortSettings(
+        json: JSONObject?,
+        defaults: ProjectionSeatAutoComfortSettings,
+    ): ProjectionSeatAutoComfortSettings {
+        if (json == null) return defaults
+        return defaults.copy(
+            heat = decodeSeatAutoModeSettings(json.optJSONObject("heat"), defaults.heat),
+            vent = decodeSeatAutoModeSettings(json.optJSONObject("vent"), defaults.vent),
+        )
+    }
+
+    private fun decodeSeatAutoModeSettings(
+        json: JSONObject?,
+        defaults: ProjectionSeatAutoModeSettings,
+    ): ProjectionSeatAutoModeSettings {
+        if (json == null) return defaults
+        return defaults.copy(
+            enabled = json.optBoolean("enabled", defaults.enabled),
+            thresholdC = json.optInt("thresholdC", defaults.thresholdC),
+            startLevel = json.optInt("startLevel", defaults.startLevel).coerceIn(1, 3),
+            durationMinutes = json.optInt("durationMinutes", defaults.durationMinutes),
         )
     }
 }

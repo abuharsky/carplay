@@ -111,17 +111,24 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alexander.carplay.R
 import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
 import com.alexander.carplay.domain.model.ProjectionAudioRoute
+import com.alexander.carplay.domain.model.ProjectionDisplayDpi
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionEqPreset
 import com.alexander.carplay.domain.model.ProjectionMicRoute
 import com.alexander.carplay.domain.model.ProjectionPlayerAudioSettings
+import com.alexander.carplay.domain.model.buildProjectionSeatAutoDecayStages
+import com.alexander.carplay.domain.model.ProjectionSeatAutoComfortSettings
+import kotlin.math.roundToInt
+import com.alexander.carplay.domain.model.ProjectionSeatAutoModeSettings
 import com.alexander.carplay.domain.model.ProjectionUiEvent
+import com.alexander.carplay.presentation.climate.ClimateBarHeight
+import com.alexander.carplay.presentation.climate.ClimateBarScreen
+import com.alexander.carplay.presentation.climate.rememberClimateBarState
 import com.alexander.carplay.presentation.viewmodel.CarPlayDeviceUiState
 import com.alexander.carplay.presentation.viewmodel.CarPlayUiState
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlin.math.roundToInt
 
 private val AppColorScheme = darkColorScheme(
     background = Color(0xFF050816),
@@ -210,6 +217,11 @@ private val AppTypography = Typography(
     ),
 )
 
+private val AutoSeatHeatThresholdOptions = listOf(4, 6, 8, 10, 12, 15)
+private val AutoSeatVentThresholdOptions = listOf(22, 24, 26, 28, 30, 32)
+private val AutoSeatStartLevelOptions = listOf(1, 2, 3)
+private val AutoSeatDurationOptions = listOf(5, 10, 15, 20, 30)
+
 private fun iosTextStyle(
     fontSize: androidx.compose.ui.unit.TextUnit,
     lineHeight: androidx.compose.ui.unit.TextUnit,
@@ -254,6 +266,7 @@ fun CarPlayRoute(
     var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var isSelectorExpanded by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var climatePanelPreferenceEnabled by rememberSaveable { mutableStateOf(viewModel.loadClimatePanelEnabled()) }
 
     LaunchedEffect(devices, sessionSnapshot.currentDeviceId) {
         val availableIds = devices.map { it.id }.toSet()
@@ -290,65 +303,88 @@ fun CarPlayRoute(
     val effectiveShowConnectionOverlay = uiState.showConnectionOverlay && !hasResumeSnapshot
     val shouldShowStop = sessionIsActive || selectedDevice?.isConnecting == true || selectedDevice?.isActive == true
     val connectActionEnabled = shouldShowStop || selectedDevice != null
+    val appliedClimatePanelEnabled = sessionSnapshot.appliedClimatePanelEnabled
+    val climateBarState = rememberClimateBarState(enabled = appliedClimatePanelEnabled)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        ProjectionTextureSurface(
-            viewModel = viewModel,
-            videoWidth = uiState.videoWidth,
-            videoHeight = uiState.videoHeight,
-            sessionActive = sessionIsActive,
-            touchEnabled = !effectiveShowConnectionOverlay,
-        )
-
-        AnimatedVisibility(
-            visible = effectiveShowConnectionOverlay,
-            enter = fadeIn(animationSpec = tween(320)),
-            exit = fadeOut(animationSpec = tween(420)),
-            modifier = Modifier
-                .fillMaxSize()
-                .zIndex(2f),
-        ) {
-            ConnectionOverlay(
-                uiState = uiState,
-                devices = devices,
-                selectedDevice = selectedDevice,
-                isSelectorExpanded = isSelectorExpanded,
-                onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
-                onSelectorDismiss = { isSelectorExpanded = false },
-                onDeviceSelected = { device ->
-                    selectedDeviceId = device.id
-                    isSelectorExpanded = false
-                },
-                onActionClick = {
-                    when {
-                        shouldShowStop -> viewModel.onCancelDeviceConnection()
-                        selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
-                        else -> viewModel.onConnectClicked()
-                    }
-                },
-                connectActionEnabled = connectActionEnabled,
-                showStopAction = shouldShowStop,
-                uiScale = 1f,
-            )
-        }
-
-        if (showSettings) {
-            ProjectionSettingsScreen(
-                deviceId = sessionSnapshot.currentDeviceId,
-                deviceName = sessionSnapshot.currentDeviceName,
-                diagnosticsText = uiState.diagnosticsText,
-                viewModel = viewModel,
-                onDismiss = { showSettings = false },
-                uiScale = 1f,
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(4f),
-            )
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                ProjectionTextureSurface(
+                    viewModel = viewModel,
+                    videoWidth = uiState.videoWidth,
+                    videoHeight = uiState.videoHeight,
+                    sessionActive = sessionIsActive,
+                    touchEnabled = !effectiveShowConnectionOverlay,
+                )
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = effectiveShowConnectionOverlay,
+                    enter = fadeIn(animationSpec = tween(320)),
+                    exit = fadeOut(animationSpec = tween(420)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(2f),
+                ) {
+                    ConnectionOverlay(
+                        uiState = uiState,
+                        devices = devices,
+                        selectedDevice = selectedDevice,
+                        isSelectorExpanded = isSelectorExpanded,
+                        onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
+                        onSelectorDismiss = { isSelectorExpanded = false },
+                        onDeviceSelected = { device ->
+                            selectedDeviceId = device.id
+                            isSelectorExpanded = false
+                        },
+                        onActionClick = {
+                            when {
+                                shouldShowStop -> viewModel.onCancelDeviceConnection()
+                                selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
+                                else -> viewModel.onConnectClicked()
+                            }
+                        },
+                        connectActionEnabled = connectActionEnabled,
+                        showStopAction = shouldShowStop,
+                        onSettingsClick = { showSettings = true },
+                        uiScale = 1f,
+                    )
+                }
+
+                if (showSettings) {
+                    ProjectionSettingsScreen(
+                        deviceId = sessionSnapshot.currentDeviceId,
+                        deviceName = sessionSnapshot.currentDeviceName,
+                        diagnosticsText = uiState.diagnosticsText,
+                        climatePanelEnabled = climatePanelPreferenceEnabled,
+                        viewModel = viewModel,
+                        onDismiss = { showSettings = false },
+                        onClimatePanelSaved = { climatePanelPreferenceEnabled = it },
+                        uiScale = 1f,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(4f),
+                    )
+                }
+            }
+
+            if (appliedClimatePanelEnabled) {
+                ClimateBarScreen(
+                    state = climateBarState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(ClimateBarHeight),
+                )
+            }
         }
+
     }
 }
 
@@ -399,6 +435,7 @@ private fun ProjectionTextureSurface(
     var textureViewRef by remember { mutableStateOf<TextureView?>(null) }
     var surfaceBoundToSession by remember { mutableStateOf(false) }
     var lifecycleSurfaceEnabled by remember { mutableStateOf(false) }
+    var lastAppliedBufferSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var resumeSnapshot by remember(sessionActive, videoWidth, videoHeight) {
         mutableStateOf(
             if (sessionActive) {
@@ -444,13 +481,17 @@ private fun ProjectionTextureSurface(
         val width = latestVideoWidth
         val height = latestVideoHeight
         if (width != null && height != null) {
-            surfaceTexture.setDefaultBufferSize(width, height)
+            val nextSize = width to height
+            if (lastAppliedBufferSize != nextSize) {
+                surfaceTexture.setDefaultBufferSize(width, height)
+                view.post {
+                    view.requestLayout()
+                    view.invalidate()
+                }
+                lastAppliedBufferSize = nextSize
+            }
         }
         view.isOpaque = true
-        view.post {
-            view.requestLayout()
-            view.invalidate()
-        }
         if (textureSurface == null) {
             textureSurface = AndroidSurface(surfaceTexture)
         }
@@ -474,6 +515,7 @@ private fun ProjectionTextureSurface(
             textureSurface?.release()
             textureSurface = null
             textureViewRef = null
+            lastAppliedBufferSize = null
         }
     }
 
@@ -558,11 +600,15 @@ private fun ProjectionTextureSurface(
                             val videoW = latestVideoWidth
                             val videoH = latestVideoHeight
                             if (videoW != null && videoH != null) {
-                                surface.setDefaultBufferSize(videoW, videoH)
-                            }
-                            post {
-                                requestLayout()
-                                invalidate()
+                                val nextSize = videoW to videoH
+                                if (lastAppliedBufferSize != nextSize) {
+                                    surface.setDefaultBufferSize(videoW, videoH)
+                                    post {
+                                        requestLayout()
+                                        invalidate()
+                                    }
+                                    lastAppliedBufferSize = nextSize
+                                }
                             }
                         }
 
@@ -572,6 +618,7 @@ private fun ProjectionTextureSurface(
                             textureSurface?.release()
                             textureSurface = null
                             textureViewRef = null
+                            lastAppliedBufferSize = null
                             return true
                         }
 
@@ -592,11 +639,15 @@ private fun ProjectionTextureSurface(
                 val width = videoWidth
                 val height = videoHeight
                 if (width != null && height != null) {
-                    textureView.surfaceTexture?.setDefaultBufferSize(width, height)
-                }
-                textureView.post {
-                    textureView.requestLayout()
-                    textureView.invalidate()
+                    val nextSize = width to height
+                    if (lastAppliedBufferSize != nextSize) {
+                        textureView.surfaceTexture?.setDefaultBufferSize(width, height)
+                        textureView.post {
+                            textureView.requestLayout()
+                            textureView.invalidate()
+                        }
+                        lastAppliedBufferSize = nextSize
+                    }
                 }
                 if (lifecycleSurfaceEnabled && textureView.isAvailable) {
                     bindSurfaceIfPossible(textureView)
@@ -644,6 +695,7 @@ private fun ConnectionOverlay(
     onActionClick: () -> Unit,
     connectActionEnabled: Boolean,
     showStopAction: Boolean,
+    onSettingsClick: () -> Unit,
     uiScale: Float,
 ) {
     BoxWithConstraints(
@@ -726,6 +778,13 @@ private fun ConnectionOverlay(
                         )
                     }
                 }
+
+                OverlaySettingsButton(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 28.dp, bottom = overlayBottomOffset + 6.dp),
+                    onClick = onSettingsClick,
+                )
             }
         }
     }
@@ -1013,12 +1072,37 @@ private fun OverlayActionButton(
 }
 
 @Composable
+private fun OverlaySettingsButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .requiredSize(40.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.055f), CircleShape)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(id = R.drawable.ic_overlay_settings),
+            contentDescription = stringResource(id = R.string.overlay_open_settings),
+            modifier = Modifier.size(20.dp),
+            tint = Color.White.copy(alpha = 0.64f),
+        )
+    }
+}
+
+@Composable
 private fun ProjectionSettingsScreen(
     deviceId: String?,
     deviceName: String?,
     diagnosticsText: String,
+    climatePanelEnabled: Boolean,
     viewModel: CarPlayViewModel,
     onDismiss: () -> Unit,
+    onClimatePanelSaved: (Boolean) -> Unit,
     uiScale: Float,
     modifier: Modifier = Modifier,
 ) {
@@ -1027,24 +1111,43 @@ private fun ProjectionSettingsScreen(
     }
     val loadedAdapterName = remember { viewModel.loadAdapterName() }
     val loadedAutoConnectEnabled = remember { viewModel.loadAutoConnectEnabled() }
+    val loadedAdapterDpi = remember { viewModel.loadAdapterDpi() }
     var savedSettings by remember(deviceId, deviceName) { mutableStateOf(loadedSettings) }
     var workingSettings by remember(deviceId, deviceName) { mutableStateOf(loadedSettings) }
     var savedAdapterName by remember { mutableStateOf(loadedAdapterName) }
     var workingAdapterName by remember { mutableStateOf(loadedAdapterName) }
     var savedAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
     var workingAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
+    var savedAdapterDpi by remember { mutableStateOf(loadedAdapterDpi) }
+    var workingAdapterDpi by remember { mutableStateOf(loadedAdapterDpi) }
+    var savedClimatePanelEnabled by remember { mutableStateOf(climatePanelEnabled) }
+    var workingClimatePanelEnabled by remember { mutableStateOf(climatePanelEnabled) }
     var showDiagnostics by rememberSaveable(deviceId, deviceName) { mutableStateOf(false) }
     var pendingRealtimePreview by remember(deviceId, deviceName) {
         mutableStateOf<ProjectionDeviceSettings?>(null)
     }
 
-    val reconnectRequired = remember(workingSettings, savedSettings) {
+    val reconnectRequired = remember(
+        workingSettings,
+        savedSettings,
+        workingAdapterName,
+        savedAdapterName,
+        workingAdapterDpi,
+        savedAdapterDpi,
+        workingClimatePanelEnabled,
+        savedClimatePanelEnabled,
+    ) {
         workingSettings.audioRoute != savedSettings.audioRoute ||
-            workingSettings.micRoute != savedSettings.micRoute
-    } || workingAdapterName != savedAdapterName || workingAutoConnectEnabled != savedAutoConnectEnabled
+            workingSettings.micRoute != savedSettings.micRoute ||
+            workingAdapterName != savedAdapterName ||
+            workingAdapterDpi != savedAdapterDpi ||
+            workingClimatePanelEnabled != savedClimatePanelEnabled
+    }
     val hasUnsavedChanges = workingSettings != savedSettings ||
         workingAdapterName != savedAdapterName ||
-        workingAutoConnectEnabled != savedAutoConnectEnabled
+        workingAutoConnectEnabled != savedAutoConnectEnabled ||
+        workingAdapterDpi != savedAdapterDpi ||
+        workingClimatePanelEnabled != savedClimatePanelEnabled
 
     LaunchedEffect(deviceId, deviceName) {
         val adapterName = viewModel.loadAdapterName()
@@ -1053,6 +1156,11 @@ private fun ProjectionSettingsScreen(
         val autoConnectEnabled = viewModel.loadAutoConnectEnabled()
         savedAutoConnectEnabled = autoConnectEnabled
         workingAutoConnectEnabled = autoConnectEnabled
+        val adapterDpi = viewModel.loadAdapterDpi()
+        savedAdapterDpi = adapterDpi
+        workingAdapterDpi = adapterDpi
+        savedClimatePanelEnabled = climatePanelEnabled
+        workingClimatePanelEnabled = climatePanelEnabled
     }
 
     LaunchedEffect(pendingRealtimePreview, showDiagnostics) {
@@ -1075,7 +1183,9 @@ private fun ProjectionSettingsScreen(
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
     ) {
-        val adapterCardWidth = (maxWidth * 0.18f).coerceIn(320.dp, 420.dp)
+        val climateCardWidth = (maxWidth * 0.18f).coerceIn(320.dp, 400.dp)
+        val seatAutomationCardWidth = (maxWidth * 0.24f).coerceIn(420.dp, 540.dp)
+        val adapterCardWidth = (maxWidth * 0.19f).coerceIn(340.dp, 460.dp)
         val micCardWidth = (maxWidth * 0.20f).coerceIn(320.dp, 420.dp)
         val audioCardWidth = (maxWidth * 0.22f).coerceIn(360.dp, 460.dp)
         val enhancementCardWidth = (maxWidth * 0.26f).coerceIn(420.dp, 540.dp)
@@ -1119,21 +1229,26 @@ private fun ProjectionSettingsScreen(
                 Column(
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    val settingsSheetTitle = stringResource(id = R.string.settings_sheet_title)
+                    val settingsSheetDefaultDevice = stringResource(id = R.string.settings_sheet_default_device)
                     SettingsHeader(
                         title = if (showDiagnostics) {
                             stringResource(id = R.string.logs_title)
                         } else {
                             buildString {
-                                append(stringResource(id = R.string.settings_sheet_title))
+                                append(settingsSheetTitle)
                                 append(" (")
-                                append(
-                                    deviceName?.takeIf { it.isNotBlank() }
-                                        ?: stringResource(id = R.string.settings_sheet_default_device),
-                                )
+                                append(deviceName?.takeIf { it.isNotBlank() } ?: settingsSheetDefaultDevice)
                                 append(")")
                             }
                         },
-                        saveLabel = stringResource(id = R.string.settings_save),
+                        saveLabel = stringResource(
+                            id = if (reconnectRequired) {
+                                R.string.settings_save_reconnect
+                            } else {
+                                R.string.settings_save
+                            },
+                        ),
                         saveEnabled = hasUnsavedChanges && !showDiagnostics,
                         onBack = {
                             if (showDiagnostics) {
@@ -1146,8 +1261,13 @@ private fun ProjectionSettingsScreen(
                             pendingRealtimePreview = null
                             viewModel.saveAdapterName(workingAdapterName)
                             viewModel.saveAutoConnectEnabled(workingAutoConnectEnabled)
+                            viewModel.saveAdapterDpi(workingAdapterDpi)
+                            viewModel.saveClimatePanelEnabled(workingClimatePanelEnabled)
                             savedAdapterName = workingAdapterName
                             savedAutoConnectEnabled = workingAutoConnectEnabled
+                            savedAdapterDpi = workingAdapterDpi
+                            savedClimatePanelEnabled = workingClimatePanelEnabled
+                            onClimatePanelSaved(workingClimatePanelEnabled)
                             viewModel.saveDeviceSettings(workingSettings, reconnectRequired)
                             onDismiss()
                         },
@@ -1177,6 +1297,28 @@ private fun ProjectionSettingsScreen(
                                 .padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(24.dp),
                         ) {
+                            ClimatePanelSection(
+                                modifier = Modifier
+                                    .width(climateCardWidth)
+                                    .fillMaxHeight(),
+                                enabled = workingClimatePanelEnabled,
+                                onEnabledChanged = { workingClimatePanelEnabled = it },
+                            )
+
+                            SeatAutoComfortSection(
+                                modifier = Modifier
+                                    .width(seatAutomationCardWidth)
+                                    .fillMaxHeight(),
+                                driverSettings = workingSettings.driverSeatAutoComfort,
+                                passengerSettings = workingSettings.passengerSeatAutoComfort,
+                                onDriverSettingsChanged = { updated ->
+                                    workingSettings = workingSettings.copy(driverSeatAutoComfort = updated)
+                                },
+                                onPassengerSettingsChanged = { updated ->
+                                    workingSettings = workingSettings.copy(passengerSeatAutoComfort = updated)
+                                },
+                            )
+
                             AdapterIdentitySection(
                                 modifier = Modifier
                                     .width(adapterCardWidth)
@@ -1185,6 +1327,8 @@ private fun ProjectionSettingsScreen(
                                 onAdapterNameChange = { workingAdapterName = sanitizeAdapterNameInput(it) },
                                 autoConnectEnabled = workingAutoConnectEnabled,
                                 onAutoConnectChanged = { workingAutoConnectEnabled = it },
+                                adapterDpi = workingAdapterDpi,
+                                onAdapterDpiChange = { workingAdapterDpi = it },
                                 onDisconnect = {
                                     workingAutoConnectEnabled = false
                                     savedAutoConnectEnabled = false
@@ -1460,11 +1604,268 @@ private fun AudioSettingsGroup(
 }
 
 @Composable
+private fun ClimatePanelSection(
+    enabled: Boolean,
+    onEnabledChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SettingsSectionCard(
+        modifier = modifier,
+        title = stringResource(id = R.string.settings_climate_panel_title),
+        subtitle = stringResource(id = R.string.settings_climate_panel_subtitle),
+    ) {
+        AdapterToggleRow(
+            title = stringResource(id = R.string.settings_climate_panel_toggle),
+            checked = enabled,
+            onCheckedChange = onEnabledChanged,
+        )
+    }
+}
+
+@Composable
+private fun SeatAutoComfortSection(
+    driverSettings: ProjectionSeatAutoComfortSettings,
+    passengerSettings: ProjectionSeatAutoComfortSettings,
+    onDriverSettingsChanged: (ProjectionSeatAutoComfortSettings) -> Unit,
+    onPassengerSettingsChanged: (ProjectionSeatAutoComfortSettings) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SettingsSectionCard(
+        modifier = modifier,
+        title = stringResource(id = R.string.settings_seat_auto_title),
+        subtitle = stringResource(id = R.string.settings_seat_auto_subtitle),
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(bottom = 4.dp),
+        ) {
+            item {
+                SeatAutoComfortCard(
+                    title = stringResource(id = R.string.settings_seat_left_title),
+                    settings = driverSettings,
+                    onSettingsChange = onDriverSettingsChanged,
+                )
+            }
+            item {
+                SeatAutoComfortCard(
+                    title = stringResource(id = R.string.settings_seat_right_title),
+                    settings = passengerSettings,
+                    onSettingsChange = onPassengerSettingsChanged,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeatAutoComfortCard(
+    title: String,
+    settings: ProjectionSeatAutoComfortSettings,
+    onSettingsChange: (ProjectionSeatAutoComfortSettings) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        color = Color.White.copy(alpha = 0.045f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = title,
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+            )
+
+            SeatAutoModeBlock(
+                title = stringResource(id = R.string.settings_seat_auto_heat_title),
+                thresholdLabel = stringResource(id = R.string.settings_seat_auto_threshold_until_label),
+                settings = settings.heat,
+                thresholdOptions = AutoSeatHeatThresholdOptions,
+                onSettingsChange = { updated -> onSettingsChange(settings.copy(heat = updated)) },
+            )
+
+            SeatAutoModeBlock(
+                title = stringResource(id = R.string.settings_seat_auto_vent_title),
+                thresholdLabel = stringResource(id = R.string.settings_seat_auto_threshold_from_label),
+                settings = settings.vent,
+                thresholdOptions = AutoSeatVentThresholdOptions,
+                onSettingsChange = { updated -> onSettingsChange(settings.copy(vent = updated)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SeatAutoModeBlock(
+    title: String,
+    thresholdLabel: String,
+    settings: ProjectionSeatAutoModeSettings,
+    thresholdOptions: List<Int>,
+    onSettingsChange: (ProjectionSeatAutoModeSettings) -> Unit,
+) {
+    val decaySummary = remember(settings.startLevel, settings.durationMinutes) {
+        buildProjectionSeatAutoDecayStages(
+            startLevel = settings.startLevel,
+            totalMinutes = settings.durationMinutes,
+        )
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = Color.White.copy(alpha = 0.04f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    modifier = Modifier.weight(1f),
+                )
+                AdapterToggleSwitch(
+                    checked = settings.enabled,
+                    onCheckedChange = { enabled -> onSettingsChange(settings.copy(enabled = enabled)) },
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .alpha(if (settings.enabled) 1f else 0.7f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SeatAutoValueChip(
+                    modifier = Modifier.weight(1f),
+                    label = thresholdLabel,
+                    value = "${settings.thresholdC}°C",
+                    onClick = {
+                        onSettingsChange(
+                            settings.copy(
+                                thresholdC = cycleOption(thresholdOptions, settings.thresholdC),
+                            ),
+                        )
+                    },
+                )
+                SeatAutoValueChip(
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(id = R.string.settings_seat_auto_level_label),
+                    value = stringResource(
+                        id = R.string.settings_seat_auto_level_value,
+                        settings.startLevel,
+                    ),
+                    onClick = {
+                        onSettingsChange(
+                            settings.copy(
+                                startLevel = cycleOption(AutoSeatStartLevelOptions, settings.startLevel),
+                            ),
+                        )
+                    },
+                )
+                SeatAutoValueChip(
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(id = R.string.settings_seat_auto_duration_label),
+                    value = stringResource(
+                        id = R.string.settings_seat_auto_duration_value,
+                        settings.durationMinutes,
+                    ),
+                    onClick = {
+                        onSettingsChange(
+                            settings.copy(
+                                durationMinutes = cycleOption(AutoSeatDurationOptions, settings.durationMinutes),
+                            ),
+                        )
+                    },
+                )
+            }
+
+            val decayLabel = stringResource(id = R.string.settings_seat_auto_decay_label)
+            val decayStages = decaySummary.map { stage ->
+                stringResource(
+                    id = R.string.settings_seat_auto_decay_stage_value,
+                    stage.minutes,
+                    stage.level,
+                )
+            }
+
+            Text(
+                text = buildString {
+                    append(decayLabel)
+                    append(": ")
+                    append(decayStages.joinToString(separator = " \u2192 "))
+                },
+                color = Color.White.copy(alpha = if (settings.enabled) 0.58f else 0.38f),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 17.sp,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SeatAutoValueChip(
+    label: String,
+    value: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White.copy(alpha = 0.05f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = label,
+                color = Color.White.copy(alpha = 0.54f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+            )
+            Text(
+                text = value,
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
 private fun AdapterIdentitySection(
     adapterName: String,
     onAdapterNameChange: (String) -> Unit,
     autoConnectEnabled: Boolean,
     onAutoConnectChanged: (Boolean) -> Unit,
+    adapterDpi: Int,
+    onAdapterDpiChange: (Int) -> Unit,
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1514,6 +1915,49 @@ private fun AdapterIdentitySection(
             checked = autoConnectEnabled,
             onCheckedChange = onAutoConnectChanged,
         )
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = Color.White.copy(alpha = 0.05f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.settings_dpi_title),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    )
+                    Text(
+                        text = stringResource(id = R.string.settings_dpi_subtitle),
+                        color = Color.White.copy(alpha = 0.56f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    ProjectionDisplayDpi.supportedValues.forEach { dpi ->
+                        AdapterOptionChip(
+                            modifier = Modifier.weight(1f),
+                            label = dpi.toString(),
+                            selected = adapterDpi == dpi,
+                            onClick = { onAdapterDpiChange(dpi) },
+                        )
+                    }
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(18.dp))
 
@@ -2184,6 +2628,7 @@ private fun FilledVerticalSlider(
 @Composable
 private fun AdapterToggleRow(
     title: String,
+    subtitle: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -2211,7 +2656,7 @@ private fun AdapterToggleRow(
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 )
                 Text(
-                    text = if (checked) "On" else "Off",
+                    text = subtitle ?: if (checked) "On" else "Off",
                     color = Color.White.copy(alpha = 0.56f),
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -2244,6 +2689,39 @@ private fun AdapterToggleSwitch(
     )
 }
 
+@Composable
+private fun AdapterOptionChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = if (selected) {
+            Color.White.copy(alpha = 0.92f)
+        } else {
+            Color.White.copy(alpha = 0.06f)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            Color.White.copy(alpha = if (selected) 0.08f else 0.06f),
+        ),
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Color(0xFF09111E) else Color.White.copy(alpha = 0.84f),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 10.dp, vertical = 14.dp),
+        )
+    }
+}
+
 private fun presetLabel(preset: ProjectionEqPreset): String {
     return when (preset) {
         ProjectionEqPreset.FLAT -> "Ровно"
@@ -2272,6 +2750,19 @@ private fun playerLabel(player: ProjectionAudioPlayerType): String {
         ProjectionAudioPlayerType.SIRI -> "Siri"
         ProjectionAudioPlayerType.PHONE -> "Разговор"
         ProjectionAudioPlayerType.ALERT -> "Рингтон"
+    }
+}
+
+private fun cycleOption(
+    options: List<Int>,
+    current: Int,
+): Int {
+    if (options.isEmpty()) return current
+    val currentIndex = options.indexOf(current)
+    return if (currentIndex == -1 || currentIndex == options.lastIndex) {
+        options.first()
+    } else {
+        options[currentIndex + 1]
     }
 }
 

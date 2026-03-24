@@ -11,6 +11,8 @@ import android.os.Build
 import android.view.WindowManager
 import androidx.appcompat.content.res.AppCompatResources
 import com.alexander.carplay.R
+import com.alexander.carplay.domain.model.ProjectionDisplayDpi
+import com.alexander.carplay.presentation.climate.ClimateBarHeightDp
 import java.io.ByteArrayOutputStream
 
 data class NaviScreenInfo(
@@ -39,6 +41,7 @@ data class ProjectionSessionConfig(
     val androidWorkMode: Boolean = false,
     val width: Int,
     val height: Int,
+    val climatePanelEnabled: Boolean = false,
     val fps: Int = 60,
     val dpi: Int = 160,
     val format: Int = 5,
@@ -58,32 +61,48 @@ data class ProjectionSessionConfig(
     val oemBranding: OemBrandingConfig = OemBrandingConfig(),
     val extendedBoxSettings: ExtendedBoxSettingsConfig = ExtendedBoxSettingsConfig(),
 ) {
+    private data class ResolvedDisplaySpec(
+        val width: Int,
+        val height: Int,
+        val physicalWidthMm: Int,
+        val physicalHeightMm: Int,
+    )
+
     companion object {
         private const val DEFAULT_STREAM_FPS = 60
-        private const val DEFAULT_DPI = 160
         private const val SIZE_ALIGNMENT = 16
         private const val DEFAULT_BOX_NAME = "Carlink-0000"
+        private const val DEFAULT_PHYSICAL_WIDTH_MM = 250
+        private const val DEFAULT_PHYSICAL_HEIGHT_MM = 100
 
         fun fromContext(
             context: Context,
             adapterName: String = DEFAULT_BOX_NAME,
+            climatePanelEnabled: Boolean = false,
+            dpi: Int = ProjectionDisplayDpi.DEFAULT,
         ): ProjectionSessionConfig {
-            val (displayWidth, displayHeight) = resolveLandscapeDisplaySize(context)
+            val displaySpec = resolveLandscapeDisplaySize(context, climatePanelEnabled)
             val boxName = adapterName
             return ProjectionSessionConfig(
                 androidWorkMode = false,
-                width = displayWidth,
-                height = displayHeight,
+                width = displaySpec.width,
+                height = displaySpec.height,
+                climatePanelEnabled = climatePanelEnabled,
                 fps = DEFAULT_STREAM_FPS,
-                dpi = DEFAULT_DPI,
+                dpi = ProjectionDisplayDpi.normalize(dpi),
                 boxName = boxName,
                 useBluetoothAudio = false,
                 useAdapterMic = true,
+                screenPhysicalWidthMm = displaySpec.physicalWidthMm,
+                screenPhysicalHeightMm = displaySpec.physicalHeightMm,
                 oemBranding = buildDefaultOemBranding(context, boxName),
             )
         }
 
-        private fun resolveLandscapeDisplaySize(context: Context): Pair<Int, Int> {
+        private fun resolveLandscapeDisplaySize(
+            context: Context,
+            climatePanelEnabled: Boolean,
+        ): ResolvedDisplaySpec {
             val windowManager = context.getSystemService(WindowManager::class.java)
             val (rawWidth, rawHeight) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val bounds = windowManager?.maximumWindowMetrics?.bounds
@@ -101,7 +120,27 @@ data class ProjectionSessionConfig(
 
             val landscapeWidth = maxOf(rawWidth, rawHeight)
             val landscapeHeight = minOf(rawWidth, rawHeight)
-            return clampToDecoderSupport(landscapeWidth, landscapeHeight, DEFAULT_STREAM_FPS)
+            val reservedBottomPx = if (climatePanelEnabled) {
+                (ClimateBarHeightDp * context.resources.displayMetrics.density).toInt()
+            } else {
+                0
+            }
+            val effectiveLandscapeHeight = (landscapeHeight - reservedBottomPx).coerceAtLeast(SIZE_ALIGNMENT)
+            val (clampedWidth, clampedHeight) = clampToDecoderSupport(
+                landscapeWidth,
+                effectiveLandscapeHeight,
+                DEFAULT_STREAM_FPS,
+            )
+            val physicalHeightMm = ((DEFAULT_PHYSICAL_HEIGHT_MM.toFloat() * effectiveLandscapeHeight) / landscapeHeight)
+                .toInt()
+                .coerceAtLeast(1)
+
+            return ResolvedDisplaySpec(
+                width = clampedWidth,
+                height = clampedHeight,
+                physicalWidthMm = DEFAULT_PHYSICAL_WIDTH_MM,
+                physicalHeightMm = physicalHeightMm,
+            )
         }
 
         private fun clampToDecoderSupport(

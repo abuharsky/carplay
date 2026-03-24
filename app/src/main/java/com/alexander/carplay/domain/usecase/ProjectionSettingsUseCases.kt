@@ -38,3 +38,27 @@ class SaveProjectionAutoConnectUseCase(
 ) {
     operator fun invoke(enabled: Boolean) = settingsPort.setAutoConnectEnabled(enabled)
 }
+
+class LoadProjectionClimatePanelEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(): Boolean = settingsPort.isClimatePanelEnabled()
+}
+
+class SaveProjectionClimatePanelEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(enabled: Boolean) = settingsPort.setClimatePanelEnabled(enabled)
+}
+
+class LoadProjectionAdapterDpiUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(): Int = settingsPort.getAdapterDpi()
+}
+
+class SaveProjectionAdapterDpiUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(dpi: Int) = settingsPort.setAdapterDpi(dpi)
+}

@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "ru.bukharskii.carplay_example"
+        applicationId = "com.wt.airconditioner"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -70,6 +70,7 @@ configurations.all {
 }
 
 dependencies {
+    compileOnly(files("libs/android.car.jar"))
     implementation(files("libs/incall-server-sdk.jar"))
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.core:core-ktx:1.13.1")
