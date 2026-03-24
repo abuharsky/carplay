@@ -46,6 +46,7 @@ class DoubleMediaServerPublisher(
     private var lastAlbumName: String? = null
     private var lastAppName: String? = null
     private var lastCoverBytes: ByteArray? = null
+    private var lastCoverPath: String? = null
 
     fun onMediaMetadata(metadata: JSONObject) {
         executor.execute {
@@ -109,6 +110,8 @@ class DoubleMediaServerPublisher(
         if (coverBytes.isEmpty()) return
         executor.execute {
             lastCoverBytes = coverBytes.copyOf()
+            val coverFile = sharedDownloadsMirror.writeSharedFile(COVER_FILE_NAME, coverBytes)
+            lastCoverPath = coverFile?.absolutePath?.replace("//", "/")
             publishCurrentState()
         }
     }
@@ -135,13 +138,12 @@ class DoubleMediaServerPublisher(
             logStore.error(SOURCE, "Failed to publish media source", error)
         }
 
-        val coverBytes = lastCoverBytes ?: return
-        val coverFile = sharedDownloadsMirror.writeSharedFile(COVER_FILE_NAME, coverBytes)
-        val coverPath = coverFile?.absolutePath?.replace("//", "/") ?: return
+        if (lastCoverBytes == null) return
+        val coverPath = lastCoverPath ?: return
 
         runCatching {
             DoubleMediaProxy.getInstance().sendMediaAlbumPath(PLAYING_ID, SONG_ID, coverPath)
-            logStore.info(SOURCE, "Published cover: $coverPath (${coverBytes.size} bytes)")
+            logStore.info(SOURCE, "Published cover: $coverPath (${lastCoverBytes?.size ?: 0} bytes)")
         }.onFailure { error ->
             logStore.error(SOURCE, "Failed to publish media cover", error)
         }
@@ -152,6 +154,7 @@ class DoubleMediaServerPublisher(
         lastSongName = null
         lastArtistName = null
         lastCoverBytes = null
+        lastCoverPath = null
     }
 
     private fun MetadataField.applyTo(
