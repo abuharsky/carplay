@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -36,8 +37,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alexander.carplay.CarPlayApp
 import com.alexander.carplay.R
+import com.alexander.carplay.domain.model.ClimateSnapshot
 
-const val ClimateBarHeightDp = 64
+const val ClimateBarHeightDp = 54
 val ClimateBarHeight = ClimateBarHeightDp.dp
 
 @Composable
@@ -45,6 +47,23 @@ fun rememberClimateBarState(enabled: Boolean): ClimateBarState {
     val appContext = LocalContext.current.applicationContext as CarPlayApp
     val controller = remember(appContext) { appContext.appContainer.climateController }
     val seatAutoComfortController = remember(appContext) { appContext.appContainer.seatAutoComfortController }
+
+    if (controller == null) {
+        return remember {
+            ClimateBarState(
+                controller = null,
+                seatAutoComfortController = null,
+                snapshot = ClimateSnapshot(
+                    driverTemp = -1f,
+                    passengerTemp = -1f,
+                    fanSpeed = -1,
+                    fanDirection = 0,
+                    isConnected = false,
+                ),
+            )
+        }
+    }
+
     val snapshot by controller.snapshot.collectAsStateWithLifecycle()
 
     DisposableEffect(controller, enabled) {
@@ -56,7 +75,7 @@ fun rememberClimateBarState(enabled: Boolean): ClimateBarState {
         }
     }
 
-    return remember(controller, snapshot) {
+    return remember(controller, seatAutoComfortController, snapshot) {
         ClimateBarState(
             controller = controller,
             seatAutoComfortController = seatAutoComfortController,
@@ -77,102 +96,135 @@ fun ClimateBarScreen(
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(ClimateBarHeight)
-                .padding(start = 10.dp, end = 10.dp, top = 7.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(start = 8.dp, end = 8.dp, top = 4.dp),
         ) {
-            TemperatureDisplay(
-                modifier = Modifier.weight(0.98f),
-                value = formatSetpointTemp(state.driverTemp),
-                connected = state.isConnected,
-                textAlign = TextAlign.Start,
-            )
-
-            SeatActionButton(
-                modifier = Modifier.weight(1.14f),
-                iconRes = R.drawable.ic_climate_heat,
-                contentDescription = "Driver seat heating",
-                accent = Color(0xFFFF9667),
-                level = state.driverSeatHeat,
-                connected = state.isConnected,
-                onClick = state::onDriverSeatHeatClick,
-            )
-
-            SeatActionButton(
-                modifier = Modifier.weight(1.14f),
-                iconRes = R.drawable.ic_climate_cool,
-                contentDescription = "Driver seat ventilation",
-                accent = Color(0xFF7CCBFF),
-                level = state.driverSeatVent,
-                connected = state.isConnected,
-                onClick = state::onDriverSeatVentClick,
-            )
-
             ClimateIndicatorsCard(
-                modifier = Modifier.weight(3.02f),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .width(238.dp),
                 cabinTemp = formatAmbientTemp(state.cabinTemp),
                 airIconRes = fanDirectionIconRes(state.fanDirection),
                 fanSpeed = state.fanSpeed,
                 connected = state.isConnected,
             )
 
-            QuickToggleChip(
-                modifier = Modifier.weight(0.68f),
-                iconRes = R.drawable.ic_climate_door_light,
-                contentDescription = "Door light",
-                active = isActiveToggle(state.doorLight),
-                connected = state.isConnected,
-                onClick = state::onDoorLightClick,
-            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TemperatureDisplay(
+                    modifier = Modifier.width(96.dp),
+                    value = formatSetpointTemp(state.driverTemp),
+                    connected = state.isConnected,
+                    textAlign = TextAlign.Start,
+                )
 
-            QuickToggleChip(
-                modifier = Modifier.weight(0.68f),
-                iconRes = R.drawable.ic_climate_mirror_fold,
-                contentDescription = "Mirror auto fold",
-                active = isActiveToggle(state.mirrorAutoFold),
-                connected = state.isConnected,
-                onClick = state::onMirrorAutoFoldClick,
-            )
+                Row(
+                    modifier = Modifier.padding(start = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SeatActionButton(
+                        modifier = Modifier.width(150.dp),
+                        iconRes = R.drawable.ic_climate_heat,
+                        contentDescription = "Driver seat heating",
+                        accent = Color(0xFFFF9667),
+                        level = state.driverSeatHeat,
+                        connected = state.isConnected,
+                        onClick = state::onDriverSeatHeatClick,
+                    )
 
-            QuickToggleChip(
-                modifier = Modifier.weight(0.68f),
-                iconRes = R.drawable.ic_climate_mirror_assist,
-                contentDescription = "Rear mirror assist",
-                active = isActiveToggle(state.mirrorRearAssist),
-                connected = state.isConnected,
-                onClick = state::onMirrorRearAssistClick,
-            )
+                    SeatActionButton(
+                        modifier = Modifier.width(150.dp),
+                        iconRes = R.drawable.ic_climate_cool,
+                        contentDescription = "Driver seat ventilation",
+                        accent = Color(0xFF7CCBFF),
+                        level = state.driverSeatVent,
+                        connected = state.isConnected,
+                        onClick = state::onDriverSeatVentClick,
+                    )
+                }
 
-            SeatActionButton(
-                modifier = Modifier.weight(1.14f),
-                iconRes = R.drawable.ic_climate_heat,
-                contentDescription = "Passenger seat heating",
-                accent = Color(0xFFFF9667),
-                level = state.passengerSeatHeat,
-                connected = state.isConnected,
-                onClick = state::onPassengerSeatHeatClick,
-            )
+                Row(
+                    modifier = Modifier.padding(start = 32.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    QuickToggleChip(
+                        modifier = Modifier.width(135.dp),
+                        iconRes = R.drawable.ic_climate_door_light,
+                        contentDescription = "Door light",
+                        active = isActiveToggle(state.doorLight),
+                        connected = state.isConnected,
+                        onClick = state::onDoorLightClick,
+                    )
 
-            SeatActionButton(
-                modifier = Modifier.weight(1.14f),
-                iconRes = R.drawable.ic_climate_cool,
-                contentDescription = "Passenger seat ventilation",
-                accent = Color(0xFF7CCBFF),
-                level = state.passengerSeatVent,
-                connected = state.isConnected,
-                onClick = state::onPassengerSeatVentClick,
-            )
+                    QuickToggleChip(
+                        modifier = Modifier.width(135.dp),
+                        iconRes = R.drawable.ic_climate_mirror_fold,
+                        contentDescription = "Mirror auto fold",
+                        active = isActiveToggle(state.mirrorAutoFold),
+                        connected = state.isConnected,
+                        onClick = state::onMirrorAutoFoldClick,
+                    )
 
-            TemperatureDisplay(
-                modifier = Modifier.weight(0.98f),
-                value = formatSetpointTemp(state.passengerTemp),
-                connected = state.isConnected,
-                textAlign = TextAlign.End,
-            )
+                    QuickToggleChip(
+                        modifier = Modifier.width(135.dp),
+                        iconRes = R.drawable.ic_climate_mirror_assist,
+                        contentDescription = "Rear mirror assist",
+                        active = isActiveToggle(state.mirrorRearAssist),
+                        connected = state.isConnected,
+                        onClick = state::onMirrorRearAssistClick,
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SeatActionButton(
+                        modifier = Modifier.width(150.dp),
+                        iconRes = R.drawable.ic_climate_heat,
+                        contentDescription = "Passenger seat heating",
+                        accent = Color(0xFFFF9667),
+                        level = state.passengerSeatHeat,
+                        connected = state.isConnected,
+                        onClick = state::onPassengerSeatHeatClick,
+                    )
+
+                    SeatActionButton(
+                        modifier = Modifier.width(150.dp),
+                        iconRes = R.drawable.ic_climate_cool,
+                        contentDescription = "Passenger seat ventilation",
+                        accent = Color(0xFF7CCBFF),
+                        level = state.passengerSeatVent,
+                        connected = state.isConnected,
+                        onClick = state::onPassengerSeatVentClick,
+                    )
+                }
+
+                TemperatureDisplay(
+                    modifier = Modifier
+                        .width(96.dp)
+                        .padding(start = 6.dp),
+                    value = formatSetpointTemp(state.passengerTemp),
+                    connected = state.isConnected,
+                    textAlign = TextAlign.End,
+                )
+            }
         }
     }
 }
@@ -196,10 +248,10 @@ private fun TemperatureDisplay(
         Text(
             modifier = Modifier.fillMaxWidth(),
             text = if (connected) value else "--",
-            color = Color(0xFF89C8FF),
+            color = if (connected) Color.White else Color.White.copy(alpha = 0.34f),
             style = MaterialTheme.typography.headlineMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 40.sp,
+                fontSize = 36.sp,
                 letterSpacing = (-0.5).sp,
             ),
             textAlign = textAlign,
@@ -218,13 +270,13 @@ private fun ClimateIndicatorsCard(
 ) {
     PanelCard(
         modifier = modifier,
-        minHeight = 48.dp,
-        horizontalPadding = 14.dp,
-        verticalPadding = 8.dp,
+        minHeight = 40.dp,
+        horizontalPadding = 12.dp,
+        verticalPadding = 5.dp,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SmallTemperatureIndicator(
@@ -263,11 +315,11 @@ private fun ClimateIndicatorsCard(
                     tint = if (connected) Color.White.copy(alpha = 0.84f) else Color.White.copy(alpha = 0.28f),
                 )
                 Text(
-                    text = if (connected && fanSpeed >= 0) fanSpeed.toString() else "--",
+                    text = formatFanSpeed(fanSpeed = fanSpeed, connected = connected),
                     color = if (connected) Color.White else Color.White.copy(alpha = 0.34f),
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.Bold,
-                        fontSize = 24.sp,
+                        fontSize = if (connected && fanSpeed == 0) 16.sp else 24.sp,
                     ),
                     textAlign = TextAlign.Start,
                     maxLines = 1,
@@ -284,6 +336,7 @@ private fun SmallTemperatureIndicator(
     connected: Boolean,
 ) {
     Row(
+        modifier = Modifier.width(64.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -293,18 +346,19 @@ private fun SmallTemperatureIndicator(
                 color = if (connected) Color.White.copy(alpha = 0.46f) else Color.White.copy(alpha = 0.22f),
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                 ),
                 maxLines = 1,
             )
         }
         Text(
             text = if (connected) value else "--",
-            color = if (connected) Color(0xFFB9DBFF) else Color.White.copy(alpha = 0.32f),
+            color = if (connected) Color.White else Color.White.copy(alpha = 0.32f),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
+                fontSize = 20.sp,
             ),
+            textAlign = TextAlign.Center,
             maxLines = 1,
         )
     }
@@ -341,8 +395,8 @@ private fun SeatActionButton(
                 shape = RoundedCornerShape(12.dp),
             )
             .clickable(enabled = connected, onClick = onClick)
-            .defaultMinSize(minHeight = 44.dp)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .defaultMinSize(minHeight = 38.dp)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
@@ -353,7 +407,7 @@ private fun SeatActionButton(
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(34.dp),
+                modifier = Modifier.size(32.dp),
                 tint = when {
                     !connected -> Color.White.copy(alpha = 0.28f)
                     isActive -> accent
@@ -364,7 +418,7 @@ private fun SeatActionButton(
                 repeat(3) { index ->
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
+                            .size(6.dp)
                             .clip(CircleShape)
                             .background(
                                 if (connected && index < level.coerceIn(0, 3)) {
@@ -409,19 +463,20 @@ private fun QuickToggleChip(
                 shape = RoundedCornerShape(12.dp),
             )
             .clickable(enabled = connected, onClick = onClick)
-            .defaultMinSize(minHeight = 44.dp),
+            .defaultMinSize(minHeight = 38.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(34.dp),
+                modifier = Modifier.size(32.dp),
                 tint = when {
                     !connected -> Color.White.copy(alpha = 0.28f)
                     active -> Color.White
@@ -430,9 +485,8 @@ private fun QuickToggleChip(
             )
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 1.dp, end = 1.dp)
-                    .size(9.dp)
+                    .align(Alignment.CenterEnd)
+                    .size(8.dp)
                     .clip(CircleShape)
                     .background(
                         when {
@@ -449,9 +503,9 @@ private fun QuickToggleChip(
 @Composable
 private fun PanelCard(
     modifier: Modifier = Modifier,
-    minHeight: androidx.compose.ui.unit.Dp = 42.dp,
+    minHeight: androidx.compose.ui.unit.Dp = 36.dp,
     horizontalPadding: androidx.compose.ui.unit.Dp = 10.dp,
-    verticalPadding: androidx.compose.ui.unit.Dp = 8.dp,
+    verticalPadding: androidx.compose.ui.unit.Dp = 5.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
     Row(
@@ -478,6 +532,15 @@ private fun formatAmbientTemp(value: Float?): String = when {
     value == null -> "--"
     value == value.toInt().toFloat() -> "${value.toInt()}°"
     else -> "${"%.1f".format(value)}°"
+}
+
+private fun formatFanSpeed(
+    fanSpeed: Int,
+    connected: Boolean,
+): String = when {
+    !connected || fanSpeed < 0 -> "--"
+    fanSpeed == 0 -> "ВЫКЛ"
+    else -> fanSpeed.toString()
 }
 
 private fun fanDirectionIconRes(value: Int): Int = when (value) {

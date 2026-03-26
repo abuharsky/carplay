@@ -118,6 +118,19 @@ public class PacketRingByteBuffer {
         lastWritePositionBeforeEnd = 0;
     }
 
+    public void trimToMinSize() {
+        if (buffer.length == MIN_BUFFER_SIZE) {
+            reset();
+            resizeAttemptCount = 0;
+            return;
+        }
+
+        buffer = new byte[MIN_BUFFER_SIZE];
+        reset();
+        resizeAttemptCount = 0;
+        log("Ring buffer trimmed to " + MIN_BUFFER_SIZE + " bytes");
+    }
+
     private void reorganizeAndResizeIfNeeded() {
         int available;
         if (writePosition > readPosition) {

@@ -1,6 +1,7 @@
 package com.alexander.carplay.platform.service
 
 import android.app.Service
+import android.content.ComponentCallbacks2
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,9 +12,11 @@ import android.hardware.usb.UsbManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.Process
 import android.view.MotionEvent
 import android.view.Surface
 import com.alexander.carplay.data.logging.DiagnosticLogStore
+import com.alexander.carplay.data.logging.ProcessDiagnostics
 import com.alexander.carplay.data.session.DongleSessionManager
 import com.alexander.carplay.data.usb.AndroidUsbTransport
 import com.alexander.carplay.domain.model.DiagnosticLogEntry
@@ -80,7 +83,7 @@ class DongleService : Service() {
         super.onCreate()
         val appContainer = (application as com.alexander.carplay.CarPlayApp).appContainer
         logStore = appContainer.logStore
-        logStore.info(SOURCE, "onCreate")
+        logStore.info(SOURCE, "onCreate | ${ProcessDiagnostics.describeCurrentProcess()}")
         sessionManager = DongleSessionManager(this, logStore, appContainer.settingsPort)
         wakeLockController = ServiceWakeLockController(this, logStore)
 
@@ -118,7 +121,17 @@ class DongleService : Service() {
     ): Int {
         logStore.info(
             SOURCE,
-            "onStartCommand action=${intent?.action ?: "-"} startId=$startId flags=$flags",
+            buildString {
+                append("onStartCommand action=").append(intent?.action ?: "-")
+                append(" intentNull=").append(intent == null)
+                append(" startId=").append(startId)
+                append(" flags=").append(flags)
+                append(" sticky=").append(true)
+                append(" pid=").append(Process.myPid())
+                intent?.extras?.keySet()?.sorted()?.takeIf { it.isNotEmpty() }?.let { keys ->
+                    append(" extras=").append(keys)
+                }
+            },
         )
         when (intent?.action) {
             ACTION_START_REPLAY -> {
@@ -138,12 +151,52 @@ class DongleService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
         .also {
-            logStore.info(SOURCE, "onBind action=${intent?.action ?: "-"}")
+            logStore.info(
+                SOURCE,
+                "onBind action=${intent?.action ?: "-"} intentNull=${intent == null} | ${ProcessDiagnostics.describeCurrentProcess()}",
+            )
         }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        logStore.info(
+            SOURCE,
+            "onUnbind action=${intent?.action ?: "-"} intentNull=${intent == null} | ${ProcessDiagnostics.describeCurrentProcess()}",
+        )
+        return super.onUnbind(intent)
+    }
+
+    override fun onRebind(intent: Intent?) {
+        super.onRebind(intent)
+        logStore.info(
+            SOURCE,
+            "onRebind action=${intent?.action ?: "-"} intentNull=${intent == null} | ${ProcessDiagnostics.describeCurrentProcess()}",
+        )
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        logStore.info(
+            SOURCE,
+            "onTaskRemoved rootIntentAction=${rootIntent?.action ?: "-"} | ${ProcessDiagnostics.describeCurrentProcess()}",
+        )
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        ProcessDiagnostics.logTrimMemory(logStore, SOURCE, level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+            sessionManager.onCriticalMemoryPressure()
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        ProcessDiagnostics.logLowMemory(logStore, SOURCE)
+    }
 
     override fun onDestroy() {
         super.onDestroy()
-        logStore.info(SOURCE, "onDestroy")
+        logStore.info(SOURCE, "onDestroy | ${ProcessDiagnostics.describeCurrentProcess()}")
         unregisterReceiver(usbReceiver)
         wakeLockController.release("service destroyed")
         serviceScope.cancel()

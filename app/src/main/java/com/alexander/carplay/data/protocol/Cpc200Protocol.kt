@@ -346,6 +346,25 @@ object Cpc200Protocol {
     fun icon256(config: ProjectionSessionConfig): ByteArray? =
         config.oemBranding.icon256Png?.let { sendFile("/etc/icon_256x256.png", it) }
 
+    /**
+     * Build HU_SAFEAREA_INFO via SendFile — Rect(left, top, right, bottom) insets, 4 × uint32 LE.
+     * Matches the OEM SafeArea format (Changan 0,0,0,72 / Great Wall 130,0,0,0 / JIDU 0,96,0,128).
+     */
+    fun safeAreaInfo(
+        left: Int = 0,
+        top: Int = 0,
+        right: Int = 0,
+        bottom: Int = 0,
+    ): ByteArray {
+        val payload = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(left)
+            .putInt(top)
+            .putInt(right)
+            .putInt(bottom)
+            .array()
+        return sendFile("/etc/RiddleBoxData/HU_SAFEAREA_INFO", payload)
+    }
+
     fun multiTouch(contacts: List<TouchContact>): ByteArray {
         val payload = ByteBuffer.allocate(contacts.size * 16).order(ByteOrder.LITTLE_ENDIAN)
         contacts.forEach { contact ->
@@ -592,6 +611,20 @@ object Cpc200Protocol {
         else -> "Command($commandId)"
     }
 
+    /**
+     * Convert a pixel value to 4 printf hex-escape bytes in little-endian order.
+     * E.g. 72 → `\x48\x00\x00\x00` (single-backslash in runtime string).
+     *
+     * Escaping pipeline: Kotlin `\\x48` → runtime `\x48` → JSON `\\x48`
+     * → adapter JSON-decode `\x48` → shell single-quotes literal → printf hex byte.
+     */
+    private fun safeAreaPxToLittleEndianHex(value: Int): String = buildString {
+        for (shift in intArrayOf(0, 8, 16, 24)) {
+            append("\\x")
+            append(String.format(Locale.US, "%02x", (value ushr shift) and 0xFF))
+        }
+    }
+
     private val MAC_ADDRESS_PATTERN = Regex("[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}")
 
     private fun sanitizeAdapterText(input: String): String =
@@ -630,6 +663,16 @@ object Cpc200Protocol {
                 append("/usr/sbin/riddleBoxCfg -s DashboardInfo 5; ")
                 append("/usr/sbin/riddleBoxCfg -s AdvancedFeatures 1; ")
                 append("rm -f /etc/RiddleBoxData/AIEIPIEREngines.datastore; ")
+                if (config.safeAreaBottomPx > 0) {
+                    // Write HU_SAFEAREA_INFO as Rect(left, top, right, bottom) — 4 x uint32 LE.
+                    // Matches OEM SafeArea format (Changan, Great Wall, JIDU).
+                    val hexBottom = safeAreaPxToLittleEndianHex(config.safeAreaBottomPx)
+                    append("printf '\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00")
+                    append(hexBottom)
+                    append("' > /etc/RiddleBoxData/HU_SAFEAREA_INFO; ")
+                } else {
+                    append("rm -f /etc/RiddleBoxData/HU_SAFEAREA_INFO; ")
+                }
                 append("/usr/sbin/riddleBoxCfg --upConfig; ")
                 append("echo \"")
             }

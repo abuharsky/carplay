@@ -19,9 +19,9 @@ interface ProjectionSettingsPort {
 
     fun setClimatePanelEnabled(enabled: Boolean)
 
-    fun getAdapterDpi(): Int
+    fun getCarPlaySafeAreaBottomDp(): Int
 
-    fun setAdapterDpi(dpi: Int)
+    fun setCarPlaySafeAreaBottomDp(bottomDp: Int)
 
     fun getLastConnectedDeviceId(): String?
 

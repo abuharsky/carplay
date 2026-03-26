@@ -6,6 +6,7 @@ import com.alexander.carplay.data.logging.DiagnosticLogStore
 import com.incall.serversdk.interactive.media.CaMediaSource
 import com.incall.serversdk.interactive.media.DoubleMediaProxy
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.Executors
 
 class DoubleMediaServerPublisher(
@@ -51,6 +52,7 @@ class DoubleMediaServerPublisher(
     fun onMediaMetadata(metadata: JSONObject) {
         executor.execute {
             if (metadata.length() == 1 && metadata.has("MediaSongPlayTime")) {
+           //     publishCoverIfAvailable()
                 return@execute
             }
 
@@ -139,14 +141,7 @@ class DoubleMediaServerPublisher(
         }
 
         if (lastCoverBytes == null) return
-        val coverPath = lastCoverPath ?: return
-
-        runCatching {
-            DoubleMediaProxy.getInstance().sendMediaAlbumPath(PLAYING_ID, SONG_ID, coverPath)
-            logStore.info(SOURCE, "Published cover: $coverPath (${lastCoverBytes?.size ?: 0} bytes)")
-        }.onFailure { error ->
-            logStore.error(SOURCE, "Failed to publish media cover", error)
-        }
+        publishCoverIfAvailable()
     }
 
     private fun clearTrackPresentation() {
@@ -179,6 +174,21 @@ class DoubleMediaServerPublisher(
             MetadataField(MetadataFieldState.BLANK)
         } else {
             MetadataField(MetadataFieldState.VALUE, value)
+        }
+    }
+
+    private fun publishCoverIfAvailable() {
+        if (lastSongName.isNullOrBlank()) return
+        if (lastCoverBytes == null) return
+        val coverPath = lastCoverPath ?: return
+        val coverFile = File(coverPath)
+        if (!coverFile.isFile) return
+
+        runCatching {
+            DoubleMediaProxy.getInstance().sendMediaAlbumPath(PLAYING_ID, SONG_ID, coverPath)
+            logStore.info(SOURCE, "Published cover: $coverPath (${lastCoverBytes?.size ?: 0} bytes)")
+        }.onFailure { error ->
+            logStore.error(SOURCE, "Failed to publish media cover", error)
         }
     }
 }

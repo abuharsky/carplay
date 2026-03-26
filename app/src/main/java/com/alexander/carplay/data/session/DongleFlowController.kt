@@ -90,7 +90,9 @@ class DongleFlowController(
         phase = ProjectionProtocolPhase.NONE
         logStore.info(
             SOURCE,
-            "Queueing init sequence: ${config.width}x${config.height}@${config.fps} dpi=${config.dpi} name=${config.boxName}",
+            "Queueing init sequence: ${config.width}x${config.height}@${config.fps} safeArea=${config.carplaySafeAreaBottomDp}dp dpi=${config.dpi} " +
+                "name=${config.boxName} mic=${if (config.useAdapterMic) "adapter" else "phone"} " +
+                "audio=${if (config.useBluetoothAudio) "car_bt" else "adapter_usb"}",
         )
         logStore.info(
             SOURCE,
@@ -396,6 +398,19 @@ class DongleFlowController(
         includeBrandingAssets: Boolean,
     ): List<ByteArray> = buildList {
         add(Cpc200Protocol.open(config))
+        // TODO: SafeArea disabled — adapter stopped connecting with these enabled.
+        //  Re-enable after root cause is found.
+        // if (config.carplaySafeAreaBottomPx > 0) {
+        //     add(Cpc200Protocol.safeAreaInfo(bottom = config.carplaySafeAreaBottomPx))
+        //     logStore.info(
+        //         SOURCE,
+        //         "SafeArea SendFile: Rect(0,0,0,${config.carplaySafeAreaBottomPx}) (${config.carplaySafeAreaBottomDp}dp)",
+        //     )
+        // }
+        // if (config.extendedBoxSettings.isActive()) {
+        //     add(Cpc200Protocol.extendedBoxSettings(config.extendedBoxSettings))
+        //     logStore.info(SOURCE, "ExtendedBoxSettings: shell injection queued (safeAreaBottom=${config.extendedBoxSettings.safeAreaBottomPx}px)")
+        // }
         add(Cpc200Protocol.sendNumber("/tmp/screen_dpi", config.dpi))
         add(Cpc200Protocol.sendBoolean("/tmp/night_mode", config.nightMode))
         add(Cpc200Protocol.sendNumber("/tmp/hand_drive_mode", config.handDriveMode))

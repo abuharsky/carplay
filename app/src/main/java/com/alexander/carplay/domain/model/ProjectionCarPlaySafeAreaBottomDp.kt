@@ -1,8 +1,8 @@
 package com.alexander.carplay.domain.model
 
-object ProjectionDisplayDpi {
-    const val DEFAULT: Int = 160
-    val supportedValues: List<Int> = listOf(160, 240, 320, 480)
+object ProjectionCarPlaySafeAreaBottomDp {
+    const val DEFAULT: Int = 0
+    val supportedValues: List<Int> = (0..96 step 4).toList()
 
     fun normalize(value: Int): Int {
         return supportedValues.firstOrNull { it == value } ?: DEFAULT

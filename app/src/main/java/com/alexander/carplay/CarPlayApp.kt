@@ -12,7 +12,7 @@ class CarPlayApp : Application() {
         super.onCreate()
         appContainer = AppContainer(this)
         ProcessDiagnostics.initialize(this, appContainer.logStore)
-        appContainer.seatAutoComfortController.start()
+        appContainer.seatAutoComfortController?.start()
     }
 
     override fun onTrimMemory(level: Int) {
@@ -31,7 +31,7 @@ class CarPlayApp : Application() {
 
     override fun onTerminate() {
         if (::appContainer.isInitialized) {
-            appContainer.seatAutoComfortController.stop()
+            appContainer.seatAutoComfortController?.stop()
             ProcessDiagnostics.recordExpectedExit(this, appContainer.logStore, "application onTerminate")
         }
         super.onTerminate()

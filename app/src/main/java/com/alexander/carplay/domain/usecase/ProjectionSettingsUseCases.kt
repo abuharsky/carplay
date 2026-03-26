@@ -51,14 +51,14 @@ class SaveProjectionClimatePanelEnabledUseCase(
     operator fun invoke(enabled: Boolean) = settingsPort.setClimatePanelEnabled(enabled)
 }
 
-class LoadProjectionAdapterDpiUseCase(
+class LoadProjectionCarPlaySafeAreaBottomUseCase(
     private val settingsPort: ProjectionSettingsPort,
 ) {
-    operator fun invoke(): Int = settingsPort.getAdapterDpi()
+    operator fun invoke(): Int = settingsPort.getCarPlaySafeAreaBottomDp()
 }
 
-class SaveProjectionAdapterDpiUseCase(
+class SaveProjectionCarPlaySafeAreaBottomUseCase(
     private val settingsPort: ProjectionSettingsPort,
 ) {
-    operator fun invoke(dpi: Int) = settingsPort.setAdapterDpi(dpi)
+    operator fun invoke(bottomDp: Int) = settingsPort.setCarPlaySafeAreaBottomDp(bottomDp)
 }

@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.provider.Settings
 import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
-import com.alexander.carplay.domain.model.ProjectionDisplayDpi
 import com.alexander.carplay.domain.model.ProjectionAudioRoute
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionEqPreset
@@ -14,6 +13,7 @@ import com.alexander.carplay.domain.model.ProjectionMicSettings
 import com.alexander.carplay.domain.model.ProjectionPlayerAudioSettings
 import com.alexander.carplay.domain.model.ProjectionSeatAutoComfortSettings
 import com.alexander.carplay.domain.model.ProjectionSeatAutoModeSettings
+import com.alexander.carplay.domain.model.ProjectionCarPlaySafeAreaBottomDp
 import com.alexander.carplay.domain.port.ProjectionSettingsPort
 import org.json.JSONArray
 import org.json.JSONObject
@@ -27,7 +27,7 @@ class SharedPreferencesProjectionSettingsStore(
         private const val KEY_ADAPTER_NAME = "adapter_name"
         private const val KEY_AUTO_CONNECT_ENABLED = "auto_connect_enabled"
         private const val KEY_CLIMATE_PANEL_ENABLED = "climate_panel_enabled"
-        private const val KEY_ADAPTER_DPI = "adapter_dpi"
+        private const val KEY_CARPLAY_SAFE_AREA_BOTTOM_DP = "carplay_safe_area_bottom_dp"
         private const val KEY_PREFIX = "device:"
         private const val KEY_DEVICE_NAME_CACHE_PREFIX = "device_name:"
         private const val DEFAULT_ADAPTER_NAME_PREFIX = "Carlink-"
@@ -81,15 +81,21 @@ class SharedPreferencesProjectionSettingsStore(
             .apply()
     }
 
-    override fun getAdapterDpi(): Int {
-        return ProjectionDisplayDpi.normalize(
-            prefs.getInt(KEY_ADAPTER_DPI, ProjectionDisplayDpi.DEFAULT),
+    override fun getCarPlaySafeAreaBottomDp(): Int {
+        return ProjectionCarPlaySafeAreaBottomDp.normalize(
+            prefs.getInt(
+                KEY_CARPLAY_SAFE_AREA_BOTTOM_DP,
+                ProjectionCarPlaySafeAreaBottomDp.DEFAULT,
+            ),
         )
     }
 
-    override fun setAdapterDpi(dpi: Int) {
+    override fun setCarPlaySafeAreaBottomDp(bottomDp: Int) {
         prefs.edit()
-            .putInt(KEY_ADAPTER_DPI, ProjectionDisplayDpi.normalize(dpi))
+            .putInt(
+                KEY_CARPLAY_SAFE_AREA_BOTTOM_DP,
+                ProjectionCarPlaySafeAreaBottomDp.normalize(bottomDp),
+            )
             .apply()
     }
 

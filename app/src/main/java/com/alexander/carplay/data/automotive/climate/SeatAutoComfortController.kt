@@ -31,6 +31,8 @@ class SeatAutoComfortController(
         private const val SOURCE = "SeatAuto"
         private const val CLIMATE_CLIENT_ID = "seat-auto"
         private const val CLIMATE_RETRY_DELAY_MS = 5_000L
+        private const val AUTO_REARM_WINDOW_MS = 10 * 60_000L
+        private const val TEMPERATURE_HYSTERESIS_C = 2f
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -46,7 +48,11 @@ class SeatAutoComfortController(
 
     private var driverRuntime: SeatAutomationRuntime? = null
     private var passengerRuntime: SeatAutomationRuntime? = null
+    private var driverPausedRuntime: SeatAutomationRuntime? = null
+    private var passengerPausedRuntime: SeatAutomationRuntime? = null
     private val suspendedSeats = mutableSetOf<SeatId>()
+    private var lastIgnitionOn: Boolean? = null
+    private var lastIgnitionOffElapsedMs: Long? = null
 
     @Volatile
     private var started = false
@@ -55,7 +61,7 @@ class SeatAutoComfortController(
         if (started) return
         started = true
         logStore.info(SOURCE, "Starting seat auto comfort controller")
-        logStore.info(SOURCE, "Temperature source: HVAC zone setpoint proxy (driver/passenger)")
+        logStore.info(SOURCE, "Temperature source: cabin temperature (HVAC current)")
         climateController.connect(CLIMATE_CLIENT_ID)
         powerMonitor.start()
         powerSnapshotFlow.value = powerMonitor.currentSnapshot()
@@ -110,14 +116,16 @@ class SeatAutoComfortController(
     private fun evaluate(reason: String) {
         val climateSnapshot = climateController.snapshot.value
         val powerSnapshot = powerSnapshotFlow.value
+        val now = SystemClock.elapsedRealtime()
         val ignitionOn = isIgnitionAvailable(powerSnapshot)
 
+        handleIgnitionTransition(
+            ignitionOn = ignitionOn,
+            nowElapsedMs = now,
+            reason = reason,
+        )
+
         if (!ignitionOn) {
-            clearAutomatedSeats("ignition unavailable: $reason")
-            if (suspendedSeats.isNotEmpty()) {
-                logStore.info(SOURCE, "Clearing manual seat auto suspensions on ignition off")
-                suspendedSeats.clear()
-            }
             cancelScheduledEvaluation()
             return
         }
@@ -128,13 +136,19 @@ class SeatAutoComfortController(
             return
         }
 
+        val cabinTempC = climateSnapshot.cabinTemp
+        if (cabinTempC == null) {
+            clearAutomatedSeats("cabin temperature unavailable: $reason")
+            scheduleNextEvaluation(CLIMATE_RETRY_DELAY_MS)
+            return
+        }
+
         val activeDeviceId = settingsPort.getLastConnectedDeviceId()
         val settings = settingsPort.getSettings(activeDeviceId)
-        val now = SystemClock.elapsedRealtime()
 
         val driverEvaluation = evaluateSeat(
             seatId = SeatId.DRIVER,
-            tempProxyC = climateSnapshot.driverTemp,
+            cabinTempC = cabinTempC,
             comfortSettings = settings.driverSeatAutoComfort,
             climateSnapshot = climateSnapshot,
             currentRuntime = driverRuntime,
@@ -143,7 +157,7 @@ class SeatAutoComfortController(
         )
         val passengerEvaluation = evaluateSeat(
             seatId = SeatId.PASSENGER,
-            tempProxyC = climateSnapshot.passengerTemp,
+            cabinTempC = cabinTempC,
             comfortSettings = settings.passengerSeatAutoComfort,
             climateSnapshot = climateSnapshot,
             currentRuntime = passengerRuntime,
@@ -161,7 +175,7 @@ class SeatAutoComfortController(
 
     private fun evaluateSeat(
         seatId: SeatId,
-        tempProxyC: Float,
+        cabinTempC: Float,
         comfortSettings: ProjectionSeatAutoComfortSettings,
         climateSnapshot: ClimateSnapshot,
         currentRuntime: SeatAutomationRuntime?,
@@ -172,12 +186,16 @@ class SeatAutoComfortController(
             return SeatEvaluation(runtime = null, nextDelayMs = null)
         }
 
-        val desiredMode = selectDesiredMode(tempProxyC, comfortSettings)
+        val desiredMode = selectDesiredMode(
+            cabinTempC = cabinTempC,
+            settings = comfortSettings,
+            currentRuntime = currentRuntime,
+        )
         if (desiredMode == null) {
             if (currentRuntime != null) {
                 logStore.info(
                     SOURCE,
-                    "${seatId.label} auto stopped: proxy=${formatTemp(tempProxyC)}C outside thresholds | $reason",
+                    "${seatId.label} auto stopped: cabin=${formatTemp(cabinTempC)}C outside thresholds | $reason",
                 )
                 climateController.applySeatComfort(
                     isDriver = seatId.isDriver,
@@ -196,7 +214,7 @@ class SeatAutoComfortController(
             logStore.info(
                 SOURCE,
                 "${seatId.label} auto started: mode=${desiredMode.mode.name.lowercase(Locale.US)} " +
-                    "proxy=${formatTemp(tempProxyC)}C threshold=${desiredMode.settings.thresholdC}C " +
+                    "cabin=${formatTemp(cabinTempC)}C threshold=${desiredMode.settings.thresholdC}C " +
                     "start=${desiredMode.settings.startLevel} duration=${desiredMode.settings.durationMinutes}m",
             )
             SeatAutomationRuntime(
@@ -244,7 +262,7 @@ class SeatAutoComfortController(
             logStore.info(
                 SOURCE,
                 "${seatId.label} auto apply: mode=${runtime.mode.name.lowercase(Locale.US)} " +
-                    "level=$activeLevel elapsed=${elapsedMs / 1000}s proxy=${formatTemp(tempProxyC)}C",
+                    "level=$activeLevel elapsed=${elapsedMs / 1000}s cabin=${formatTemp(cabinTempC)}C",
             )
         }
 
@@ -259,22 +277,122 @@ class SeatAutoComfortController(
     }
 
     private fun selectDesiredMode(
-        tempProxyC: Float,
+        cabinTempC: Float,
         settings: ProjectionSeatAutoComfortSettings,
+        currentRuntime: SeatAutomationRuntime?,
     ): DesiredSeatAutomation? {
-        if (settings.heat.enabled && tempProxyC <= settings.heat.thresholdC.toFloat()) {
+        val heatMatches = when {
+            !settings.heat.enabled -> false
+            currentRuntime?.mode == SeatAutomationMode.HEAT ->
+                cabinTempC <= settings.heat.thresholdC.toFloat() + TEMPERATURE_HYSTERESIS_C
+            else -> cabinTempC <= settings.heat.thresholdC.toFloat()
+        }
+        val ventMatches = when {
+            !settings.vent.enabled -> false
+            currentRuntime?.mode == SeatAutomationMode.VENT ->
+                cabinTempC >= settings.vent.thresholdC.toFloat() - TEMPERATURE_HYSTERESIS_C
+            else -> cabinTempC >= settings.vent.thresholdC.toFloat()
+        }
+
+        if (heatMatches && ventMatches) {
+            logStore.info(
+                SOURCE,
+                "Seat auto thresholds overlap: cabin=${formatTemp(cabinTempC)}C " +
+                    "heat<=${settings.heat.thresholdC}C vent>=${settings.vent.thresholdC}C; keeping seat off",
+            )
+            return null
+        }
+
+        if (heatMatches) {
             return DesiredSeatAutomation(
                 mode = SeatAutomationMode.HEAT,
                 settings = settings.heat,
             )
         }
-        if (settings.vent.enabled && tempProxyC >= settings.vent.thresholdC.toFloat()) {
+        if (ventMatches) {
             return DesiredSeatAutomation(
                 mode = SeatAutomationMode.VENT,
                 settings = settings.vent,
             )
         }
         return null
+    }
+
+    private fun handleIgnitionTransition(
+        ignitionOn: Boolean,
+        nowElapsedMs: Long,
+        reason: String,
+    ) {
+        val previousIgnitionOn = lastIgnitionOn
+        if (previousIgnitionOn == ignitionOn) return
+        lastIgnitionOn = ignitionOn
+
+        if (!ignitionOn) {
+            lastIgnitionOffElapsedMs = nowElapsedMs
+            pauseAutomatedSeats("ignition unavailable: $reason")
+            if (suspendedSeats.isNotEmpty()) {
+                logStore.info(SOURCE, "Clearing manual seat auto suspensions on ignition off")
+                suspendedSeats.clear()
+            }
+            return
+        }
+
+        val offDurationMs = lastIgnitionOffElapsedMs?.let { nowElapsedMs - it }
+        val shouldResumePreviousCycle = offDurationMs != null && offDurationMs < AUTO_REARM_WINDOW_MS
+        if (shouldResumePreviousCycle) {
+            if (driverPausedRuntime != null || passengerPausedRuntime != null) {
+                val offDurationSeconds = offDurationMs?.div(1000) ?: 0L
+                logStore.info(
+                    SOURCE,
+                    "Restoring seat auto after short ignition cycle: off=${offDurationSeconds}s < ${AUTO_REARM_WINDOW_MS / 1000}s",
+                )
+            }
+            driverRuntime = driverPausedRuntime
+            passengerRuntime = passengerPausedRuntime
+        } else {
+            if (offDurationMs != null) {
+                val offDurationSeconds = offDurationMs / 1000
+                logStore.info(
+                    SOURCE,
+                    "Seat auto re-armed for fresh cycle: off=${offDurationSeconds}s >= ${AUTO_REARM_WINDOW_MS / 1000}s",
+                )
+            }
+            driverRuntime = null
+            passengerRuntime = null
+        }
+        driverPausedRuntime = null
+        passengerPausedRuntime = null
+        lastIgnitionOffElapsedMs = null
+    }
+
+    private fun pauseAutomatedSeats(reason: String) {
+        if (driverRuntime != null) {
+            driverPausedRuntime = driverRuntime
+            climateController.applySeatComfort(
+                isDriver = true,
+                heatLevel = 0,
+                ventLevel = 0,
+                reason = "seat auto pause (driver): $reason",
+            )
+            logStore.info(SOURCE, "Driver auto paused: $reason")
+            driverRuntime = null
+        } else {
+            driverPausedRuntime = null
+        }
+
+        if (passengerRuntime != null) {
+            passengerPausedRuntime = passengerRuntime
+            climateController.applySeatComfort(
+                isDriver = false,
+                heatLevel = 0,
+                ventLevel = 0,
+                reason = "seat auto pause (passenger): $reason",
+            )
+            logStore.info(SOURCE, "Passenger auto paused: $reason")
+            passengerRuntime = null
+        } else {
+            passengerPausedRuntime = null
+        }
     }
 
     private fun clearAutomatedSeats(reason: String) {
@@ -298,6 +416,8 @@ class SeatAutoComfortController(
             logStore.info(SOURCE, "Passenger auto cleared: $reason")
             passengerRuntime = null
         }
+        driverPausedRuntime = null
+        passengerPausedRuntime = null
     }
 
     private fun scheduleNextEvaluation(nextDelayMs: Long?) {

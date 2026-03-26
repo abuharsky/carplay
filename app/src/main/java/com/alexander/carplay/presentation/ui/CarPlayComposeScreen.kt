@@ -26,9 +26,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -66,6 +68,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -78,11 +81,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -98,8 +102,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
@@ -111,17 +117,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alexander.carplay.R
 import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
 import com.alexander.carplay.domain.model.ProjectionAudioRoute
-import com.alexander.carplay.domain.model.ProjectionDisplayDpi
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
+import com.alexander.carplay.domain.model.ProjectionDebugHeadUnitMode
 import com.alexander.carplay.domain.model.ProjectionEqPreset
 import com.alexander.carplay.domain.model.ProjectionMicRoute
 import com.alexander.carplay.domain.model.ProjectionPlayerAudioSettings
 import com.alexander.carplay.domain.model.buildProjectionSeatAutoDecayStages
 import com.alexander.carplay.domain.model.ProjectionSeatAutoComfortSettings
-import kotlin.math.roundToInt
 import com.alexander.carplay.domain.model.ProjectionSeatAutoModeSettings
 import com.alexander.carplay.domain.model.ProjectionUiEvent
-import com.alexander.carplay.presentation.climate.ClimateBarHeight
 import com.alexander.carplay.presentation.climate.ClimateBarScreen
 import com.alexander.carplay.presentation.climate.rememberClimateBarState
 import com.alexander.carplay.presentation.viewmodel.CarPlayDeviceUiState
@@ -129,6 +133,7 @@ import com.alexander.carplay.presentation.viewmodel.CarPlayUiState
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlin.math.roundToInt
 
 private val AppColorScheme = darkColorScheme(
     background = Color(0xFF050816),
@@ -305,86 +310,254 @@ fun CarPlayRoute(
     val connectActionEnabled = shouldShowStop || selectedDevice != null
     val appliedClimatePanelEnabled = sessionSnapshot.appliedClimatePanelEnabled
     val climateBarState = rememberClimateBarState(enabled = appliedClimatePanelEnabled)
+    val context = LocalContext.current
+    val hostDensity = LocalDensity.current
+    val debugHeadUnitSpec = remember(context) { ProjectionDebugHeadUnitMode.resolve(context) }
+    val containerScale = debugHeadUnitSpec?.containerScale ?: 1f
+    val overlayUiScale = 1f
+    val climateBarHeightDp = sessionSnapshot.appliedClimateBarHeightDp
+    val shellDensity = remember(debugHeadUnitSpec, hostDensity, context) {
+        if (debugHeadUnitSpec == null) {
+            hostDensity
+        } else {
+            val dm = context.resources.displayMetrics
+            val hostLandscapeWidthPx = maxOf(dm.widthPixels, dm.heightPixels)
+            val containerWidthPx = hostLandscapeWidthPx * debugHeadUnitSpec.containerScale
+            Density(
+                density = containerWidthPx / debugHeadUnitSpec.totalWidth,
+                fontScale = hostDensity.fontScale,
+            )
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) {
-                ProjectionTextureSurface(
-                    viewModel = viewModel,
-                    videoWidth = uiState.videoWidth,
-                    videoHeight = uiState.videoHeight,
-                    sessionActive = sessionIsActive,
-                    touchEnabled = !effectiveShowConnectionOverlay,
-                )
-
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = effectiveShowConnectionOverlay,
-                    enter = fadeIn(animationSpec = tween(320)),
-                    exit = fadeOut(animationSpec = tween(420)),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex(2f),
+        SimulatedHeadUnitContainer(
+            modifier = Modifier.fillMaxSize(),
+            scale = containerScale,
+        ) {
+            CompositionLocalProvider(LocalDensity provides shellDensity) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    ConnectionOverlay(
-                        uiState = uiState,
-                        devices = devices,
-                        selectedDevice = selectedDevice,
-                        isSelectorExpanded = isSelectorExpanded,
-                        onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
-                        onSelectorDismiss = { isSelectorExpanded = false },
-                        onDeviceSelected = { device ->
-                            selectedDeviceId = device.id
-                            isSelectorExpanded = false
-                        },
-                        onActionClick = {
-                            when {
-                                shouldShowStop -> viewModel.onCancelDeviceConnection()
-                                selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
-                                else -> viewModel.onConnectClicked()
-                            }
-                        },
-                        connectActionEnabled = connectActionEnabled,
-                        showStopAction = shouldShowStop,
-                        onSettingsClick = { showSettings = true },
-                        uiScale = 1f,
-                    )
-                }
-
-                if (showSettings) {
-                    ProjectionSettingsScreen(
-                        deviceId = sessionSnapshot.currentDeviceId,
-                        deviceName = sessionSnapshot.currentDeviceName,
-                        diagnosticsText = uiState.diagnosticsText,
-                        climatePanelEnabled = climatePanelPreferenceEnabled,
-                        viewModel = viewModel,
-                        onDismiss = { showSettings = false },
-                        onClimatePanelSaved = { climatePanelPreferenceEnabled = it },
-                        uiScale = 1f,
+                Column(
+                    modifier = if (debugHeadUnitSpec != null) {
+                        Modifier
+                            .fillMaxWidth()
+                            .height(debugHeadUnitSpec.totalHeight.dp)
+                    } else {
+                        Modifier.fillMaxSize()
+                    },
+                ) {
+                    Box(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .zIndex(4f),
-                    )
-                }
-            }
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clipToBounds(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ProjectionViewportFrame(
+                            modifier = Modifier.fillMaxSize(),
+                            viewportWidth = null,
+                            viewportHeight = null,
+                        ) {
+                            val clipTop = sessionSnapshot.appliedVideoClipTopPx
+                            val clipBottom = sessionSnapshot.appliedVideoClipBottomPx
+                            val totalClip = clipTop + clipBottom
+                            val vH = uiState.videoHeight
 
-            if (appliedClimatePanelEnabled) {
-                ClimateBarScreen(
-                    state = climateBarState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(ClimateBarHeight),
-                )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .videoCrop(
+                                        videoHeight = vH ?: 0,
+                                        clipTopPx = clipTop,
+                                        clipBottomPx = clipBottom,
+                                    ),
+                            ) {
+                                ProjectionTextureSurface(
+                                    viewModel = viewModel,
+                                    videoWidth = uiState.videoWidth,
+                                    videoHeight = uiState.videoHeight,
+                                    sessionActive = sessionIsActive,
+                                    touchEnabled = !effectiveShowConnectionOverlay,
+                                )
+                            }
+
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = effectiveShowConnectionOverlay,
+                                enter = fadeIn(animationSpec = tween(320)),
+                                exit = fadeOut(animationSpec = tween(420)),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .zIndex(2f),
+                            ) {
+                                ConnectionOverlay(
+                                    uiState = uiState,
+                                    devices = devices,
+                                    selectedDevice = selectedDevice,
+                                    isSelectorExpanded = isSelectorExpanded,
+                                    onSelectorToggle = { isSelectorExpanded = !isSelectorExpanded },
+                                    onSelectorDismiss = { isSelectorExpanded = false },
+                                    onDeviceSelected = { device: CarPlayDeviceUiState ->
+                                        selectedDeviceId = device.id
+                                        isSelectorExpanded = false
+                                    },
+                                    onActionClick = {
+                                        when {
+                                            shouldShowStop -> viewModel.onCancelDeviceConnection()
+                                            selectedDevice != null -> viewModel.onDeviceSelected(selectedDevice.id)
+                                            else -> viewModel.onConnectClicked()
+                                        }
+                                    },
+                                    connectActionEnabled = connectActionEnabled,
+                                    showStopAction = shouldShowStop,
+                                    onSettingsClick = { showSettings = true },
+                                    uiScale = overlayUiScale,
+                                )
+                            }
+
+                            if (showSettings) {
+                                ProjectionSettingsScreen(
+                                    deviceId = sessionSnapshot.currentDeviceId,
+                                    deviceName = sessionSnapshot.currentDeviceName,
+                                    diagnosticsText = uiState.diagnosticsText,
+                                    climatePanelEnabled = climatePanelPreferenceEnabled,
+                                    viewModel = viewModel,
+                                    onDismiss = { showSettings = false },
+                                    onClimatePanelSaved = { climatePanelPreferenceEnabled = it },
+                                    uiScale = overlayUiScale,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .zIndex(4f),
+                                )
+                            }
+                        }
+                    }
+
+                    if (appliedClimatePanelEnabled) {
+                        ClimateBarScreen(
+                            state = climateBarState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(climateBarHeightDp.dp),
+                        )
+                    }
+                }
+                }
             }
         }
 
+    }
+}
+
+/**
+ * Layout modifier that physically enlarges the child beyond the parent bounds
+ * so that [clipTopPx]+[clipBottomPx] video pixels are hidden by the parent's
+ * [clipToBounds].  The TextureView inside receives a taller layout, mapping
+ * [videoHeight] stream pixels into (parentH + extra) screen pixels — giving
+ * reduced compression compared to fitting the full stream into parentH.
+ */
+private fun Modifier.videoCrop(
+    videoHeight: Int,
+    clipTopPx: Int,
+    clipBottomPx: Int,
+): Modifier {
+    val totalClip = clipTopPx + clipBottomPx
+    if (totalClip <= 0 || videoHeight <= totalClip) return this
+
+    return this.layout { measurable, constraints ->
+        val parentH = constraints.maxHeight
+        // How many extra screen-pixels the child needs so the SurfaceTexture
+        // maps (videoHeight) into (parentH + extra) instead of parentH.
+        // visible content = videoHeight − totalClip displayed in parentH
+        // full content    = videoHeight          displayed in parentH + extra
+        // ⇒ extra = parentH × totalClip / (videoHeight − totalClip)
+        val visibleContent = videoHeight - totalClip
+        val extraPx = (parentH.toLong() * totalClip / visibleContent).toInt()
+        val childH = parentH + extraPx
+
+        val childConstraints = constraints.copy(
+            minHeight = childH,
+            maxHeight = childH,
+        )
+        val placeable = measurable.measure(childConstraints)
+        // Shift child up so that clipTopPx share of the extra falls above the parent.
+        val offsetY = -(extraPx.toLong() * clipTopPx / totalClip).toInt()
+        layout(constraints.maxWidth, parentH) {
+            placeable.placeRelative(0, offsetY)
+        }
+    }
+}
+
+@Composable
+private fun SimulatedHeadUnitContainer(
+    modifier: Modifier = Modifier,
+    scale: Float,
+    content: @Composable () -> Unit,
+) {
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
+    ) {
+        val displayWidth = if (scale < 1f) maxWidth * scale else maxWidth
+        val displayHeight = if (scale < 1f) maxHeight * scale else maxHeight
+
+        Box(
+            modifier = Modifier
+                .width(displayWidth)
+                .height(displayHeight)
+                .clipToBounds(),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProjectionViewportFrame(
+    viewportWidth: Int?,
+    viewportHeight: Int?,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    if (viewportWidth == null || viewportHeight == null || viewportWidth <= 0 || viewportHeight <= 0) {
+        Box(
+            modifier = modifier.fillMaxSize(),
+            content = content,
+        )
+        return
+    }
+
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        val viewportAspect = viewportWidth.toFloat() / viewportHeight.toFloat()
+        val availableAspect = if (maxHeight > 0.dp) {
+            maxWidth.value / maxHeight.value
+        } else {
+            viewportAspect
+        }
+        val viewportModifier = if (availableAspect > viewportAspect) {
+            Modifier
+                .fillMaxHeight()
+                .aspectRatio(viewportAspect)
+        } else {
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(viewportAspect)
+        }
+        Box(
+            modifier = viewportModifier.clipToBounds(),
+            content = content,
+        )
     }
 }
 
@@ -394,28 +567,11 @@ private fun ScaledHeadUnitContent(
     scale: Float,
     content: @Composable () -> Unit,
 ) {
-    BoxWithConstraints(
+    SimulatedHeadUnitContainer(
         modifier = modifier,
-        contentAlignment = Alignment.Center,
-    ) {
-        val contentWidth = (maxWidth / scale).coerceAtLeast(maxWidth)
-        val contentHeight = (maxHeight / scale).coerceAtLeast(maxHeight)
-
-        Box(
-            modifier = Modifier
-                .requiredWidth(contentWidth)
-                .requiredHeight(contentHeight)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
-                },
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                content()
-            }
-        }
-    }
+        scale = scale,
+        content = content,
+    )
 }
 
 @Composable
@@ -569,9 +725,14 @@ private fun ProjectionTextureSurface(
         videoFrameObserved = false
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clipToBounds(),
+    ) {
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize(),
             factory = { context ->
                 TextureView(context).apply {
                     keepScreenOn = true
@@ -835,8 +996,7 @@ private fun DeviceSelectionField(
 
     Box(
         modifier = modifier
-            .height(96.dp)
-            .graphicsLayer { clip = false },
+            .height(96.dp),
     ) {
         Surface(
             modifier = Modifier
@@ -1111,15 +1271,12 @@ private fun ProjectionSettingsScreen(
     }
     val loadedAdapterName = remember { viewModel.loadAdapterName() }
     val loadedAutoConnectEnabled = remember { viewModel.loadAutoConnectEnabled() }
-    val loadedAdapterDpi = remember { viewModel.loadAdapterDpi() }
     var savedSettings by remember(deviceId, deviceName) { mutableStateOf(loadedSettings) }
     var workingSettings by remember(deviceId, deviceName) { mutableStateOf(loadedSettings) }
     var savedAdapterName by remember { mutableStateOf(loadedAdapterName) }
     var workingAdapterName by remember { mutableStateOf(loadedAdapterName) }
     var savedAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
     var workingAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
-    var savedAdapterDpi by remember { mutableStateOf(loadedAdapterDpi) }
-    var workingAdapterDpi by remember { mutableStateOf(loadedAdapterDpi) }
     var savedClimatePanelEnabled by remember { mutableStateOf(climatePanelEnabled) }
     var workingClimatePanelEnabled by remember { mutableStateOf(climatePanelEnabled) }
     var showDiagnostics by rememberSaveable(deviceId, deviceName) { mutableStateOf(false) }
@@ -1132,21 +1289,17 @@ private fun ProjectionSettingsScreen(
         savedSettings,
         workingAdapterName,
         savedAdapterName,
-        workingAdapterDpi,
-        savedAdapterDpi,
         workingClimatePanelEnabled,
         savedClimatePanelEnabled,
     ) {
         workingSettings.audioRoute != savedSettings.audioRoute ||
             workingSettings.micRoute != savedSettings.micRoute ||
             workingAdapterName != savedAdapterName ||
-            workingAdapterDpi != savedAdapterDpi ||
             workingClimatePanelEnabled != savedClimatePanelEnabled
     }
     val hasUnsavedChanges = workingSettings != savedSettings ||
         workingAdapterName != savedAdapterName ||
         workingAutoConnectEnabled != savedAutoConnectEnabled ||
-        workingAdapterDpi != savedAdapterDpi ||
         workingClimatePanelEnabled != savedClimatePanelEnabled
 
     LaunchedEffect(deviceId, deviceName) {
@@ -1156,9 +1309,6 @@ private fun ProjectionSettingsScreen(
         val autoConnectEnabled = viewModel.loadAutoConnectEnabled()
         savedAutoConnectEnabled = autoConnectEnabled
         workingAutoConnectEnabled = autoConnectEnabled
-        val adapterDpi = viewModel.loadAdapterDpi()
-        savedAdapterDpi = adapterDpi
-        workingAdapterDpi = adapterDpi
         savedClimatePanelEnabled = climatePanelEnabled
         workingClimatePanelEnabled = climatePanelEnabled
     }
@@ -1261,11 +1411,9 @@ private fun ProjectionSettingsScreen(
                             pendingRealtimePreview = null
                             viewModel.saveAdapterName(workingAdapterName)
                             viewModel.saveAutoConnectEnabled(workingAutoConnectEnabled)
-                            viewModel.saveAdapterDpi(workingAdapterDpi)
                             viewModel.saveClimatePanelEnabled(workingClimatePanelEnabled)
                             savedAdapterName = workingAdapterName
                             savedAutoConnectEnabled = workingAutoConnectEnabled
-                            savedAdapterDpi = workingAdapterDpi
                             savedClimatePanelEnabled = workingClimatePanelEnabled
                             onClimatePanelSaved(workingClimatePanelEnabled)
                             viewModel.saveDeviceSettings(workingSettings, reconnectRequired)
@@ -1327,8 +1475,6 @@ private fun ProjectionSettingsScreen(
                                 onAdapterNameChange = { workingAdapterName = sanitizeAdapterNameInput(it) },
                                 autoConnectEnabled = workingAutoConnectEnabled,
                                 onAutoConnectChanged = { workingAutoConnectEnabled = it },
-                                adapterDpi = workingAdapterDpi,
-                                onAdapterDpiChange = { workingAdapterDpi = it },
                                 onDisconnect = {
                                     workingAutoConnectEnabled = false
                                     savedAutoConnectEnabled = false
@@ -1614,11 +1760,19 @@ private fun ClimatePanelSection(
         title = stringResource(id = R.string.settings_climate_panel_title),
         subtitle = stringResource(id = R.string.settings_climate_panel_subtitle),
     ) {
-        AdapterToggleRow(
-            title = stringResource(id = R.string.settings_climate_panel_toggle),
-            checked = enabled,
-            onCheckedChange = onEnabledChanged,
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            AdapterToggleRow(
+                title = stringResource(id = R.string.settings_climate_panel_toggle),
+                checked = enabled,
+                onCheckedChange = onEnabledChanged,
+            )
+        }
     }
 }
 
@@ -1864,8 +2018,6 @@ private fun AdapterIdentitySection(
     onAdapterNameChange: (String) -> Unit,
     autoConnectEnabled: Boolean,
     onAutoConnectChanged: (Boolean) -> Unit,
-    adapterDpi: Int,
-    onAdapterDpiChange: (Int) -> Unit,
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1915,49 +2067,6 @@ private fun AdapterIdentitySection(
             checked = autoConnectEnabled,
             onCheckedChange = onAutoConnectChanged,
         )
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(28.dp),
-            color = Color.White.copy(alpha = 0.05f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.settings_dpi_title),
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    )
-                    Text(
-                        text = stringResource(id = R.string.settings_dpi_subtitle),
-                        color = Color.White.copy(alpha = 0.56f),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    ProjectionDisplayDpi.supportedValues.forEach { dpi ->
-                        AdapterOptionChip(
-                            modifier = Modifier.weight(1f),
-                            label = dpi.toString(),
-                            selected = adapterDpi == dpi,
-                            onClick = { onAdapterDpiChange(dpi) },
-                        )
-                    }
-                }
-            }
-        }
 
         Spacer(modifier = Modifier.height(18.dp))
 
@@ -2718,6 +2827,39 @@ private fun AdapterOptionChip(
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
                 .padding(horizontal = 10.dp, vertical = 14.dp),
+        )
+    }
+}
+
+@Composable
+private fun StepperButton(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.requiredWidth(62.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = if (enabled) {
+            Color.White.copy(alpha = 0.08f)
+        } else {
+            Color.White.copy(alpha = 0.035f)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            Color.White.copy(alpha = if (enabled) 0.08f else 0.05f),
+        ),
+    ) {
+        Text(
+            text = label,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.36f),
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(vertical = 16.dp),
         )
     }
 }

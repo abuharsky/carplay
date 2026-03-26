@@ -11,8 +11,10 @@ import android.os.Build
 import android.view.WindowManager
 import androidx.appcompat.content.res.AppCompatResources
 import com.alexander.carplay.R
-import com.alexander.carplay.domain.model.ProjectionDisplayDpi
-import com.alexander.carplay.presentation.climate.ClimateBarHeightDp
+import com.alexander.carplay.domain.model.ProjectionCarPlaySafeAreaBottomDp
+import com.alexander.carplay.domain.model.ProjectionDebugHeadUnitMode
+import com.alexander.carplay.domain.model.ProjectionDebugHeadUnitSpec
+import com.alexander.carplay.domain.model.ClimateBarLayoutFit
 import java.io.ByteArrayOutputStream
 
 data class NaviScreenInfo(
@@ -25,6 +27,7 @@ data class NaviScreenInfo(
 data class ExtendedBoxSettingsConfig(
     val enabled: Boolean = true,
     val gnssCapability: Boolean = true,
+    val safeAreaBottomPx: Int = 0,
 ) {
     fun isActive(): Boolean = enabled
 
@@ -42,6 +45,8 @@ data class ProjectionSessionConfig(
     val width: Int,
     val height: Int,
     val climatePanelEnabled: Boolean = false,
+    val carplaySafeAreaBottomDp: Int = 0,
+    val carplaySafeAreaBottomPx: Int = 0,
     val fps: Int = 60,
     val dpi: Int = 160,
     val format: Int = 5,
@@ -58,6 +63,9 @@ data class ProjectionSessionConfig(
     val useAdapterMic: Boolean = true,
     val screenPhysicalWidthMm: Int = 250,
     val screenPhysicalHeightMm: Int = 100,
+    val climateBarHeightDp: Int = ClimateBarLayoutFit.IDEAL_HEIGHT_DP,
+    val videoClipTopPx: Int = 0,
+    val videoClipBottomPx: Int = 0,
     val oemBranding: OemBrandingConfig = OemBrandingConfig(),
     val extendedBoxSettings: ExtendedBoxSettingsConfig = ExtendedBoxSettingsConfig(),
 ) {
@@ -66,6 +74,9 @@ data class ProjectionSessionConfig(
         val height: Int,
         val physicalWidthMm: Int,
         val physicalHeightMm: Int,
+        val climateBarHeightDp: Int = ClimateBarLayoutFit.IDEAL_HEIGHT_DP,
+        val videoClipTopPx: Int = 0,
+        val videoClipBottomPx: Int = 0,
     )
 
     companion object {
@@ -74,35 +85,94 @@ data class ProjectionSessionConfig(
         private const val DEFAULT_BOX_NAME = "Carlink-0000"
         private const val DEFAULT_PHYSICAL_WIDTH_MM = 250
         private const val DEFAULT_PHYSICAL_HEIGHT_MM = 100
+        private const val DEFAULT_SCREEN_DPI = 160
 
         fun fromContext(
             context: Context,
             adapterName: String = DEFAULT_BOX_NAME,
             climatePanelEnabled: Boolean = false,
-            dpi: Int = ProjectionDisplayDpi.DEFAULT,
+            carplaySafeAreaBottomDp: Int = ProjectionCarPlaySafeAreaBottomDp.DEFAULT,
         ): ProjectionSessionConfig {
-            val displaySpec = resolveLandscapeDisplaySize(context, climatePanelEnabled)
+            val effectiveSafeAreaBottomDp = ProjectionCarPlaySafeAreaBottomDp.normalize(carplaySafeAreaBottomDp)
+            val debugHeadUnitSpec = ProjectionDebugHeadUnitMode.resolve(context)
+            val density = debugHeadUnitSpec?.simulatedDensity
+                ?: context.resources.displayMetrics.density
+            val safeAreaBottomPx = (effectiveSafeAreaBottomDp * density).toInt()
+            val displaySpec = resolveLandscapeDisplaySize(
+                context = context,
+                climatePanelEnabled = climatePanelEnabled,
+                debugHeadUnitSpec = debugHeadUnitSpec,
+                density = density,
+            )
             val boxName = adapterName
             return ProjectionSessionConfig(
                 androidWorkMode = false,
                 width = displaySpec.width,
                 height = displaySpec.height,
                 climatePanelEnabled = climatePanelEnabled,
+                carplaySafeAreaBottomDp = effectiveSafeAreaBottomDp,
+                carplaySafeAreaBottomPx = safeAreaBottomPx,
+                climateBarHeightDp = displaySpec.climateBarHeightDp,
+                videoClipTopPx = displaySpec.videoClipTopPx,
+                videoClipBottomPx = displaySpec.videoClipBottomPx,
                 fps = DEFAULT_STREAM_FPS,
-                dpi = ProjectionDisplayDpi.normalize(dpi),
+                dpi = DEFAULT_SCREEN_DPI,
                 boxName = boxName,
                 useBluetoothAudio = false,
                 useAdapterMic = true,
                 screenPhysicalWidthMm = displaySpec.physicalWidthMm,
                 screenPhysicalHeightMm = displaySpec.physicalHeightMm,
                 oemBranding = buildDefaultOemBranding(context, boxName),
+                extendedBoxSettings = ExtendedBoxSettingsConfig(
+                    safeAreaBottomPx = safeAreaBottomPx,
+                ),
             )
         }
 
         private fun resolveLandscapeDisplaySize(
             context: Context,
             climatePanelEnabled: Boolean,
+            debugHeadUnitSpec: ProjectionDebugHeadUnitSpec?,
+            density: Float,
         ): ResolvedDisplaySpec {
+            val (landscapeWidth, landscapeHeight) = if (debugHeadUnitSpec != null) {
+                debugHeadUnitSpec.totalWidth to debugHeadUnitSpec.totalHeight
+            } else {
+                physicalLandscapeSize(context)
+            }
+
+            val fit = if (climatePanelEnabled) {
+                ClimateBarLayoutFit.calculate(landscapeWidth, landscapeHeight, density)
+            } else {
+                null
+            }
+            val effectiveHeight = fit?.videoStreamHeightPx ?: landscapeHeight
+
+            val (clampedWidth, clampedHeight) = clampToDecoderSupport(
+                landscapeWidth, effectiveHeight, DEFAULT_STREAM_FPS,
+            )
+
+            val physicalWidthMm = DEFAULT_PHYSICAL_WIDTH_MM
+            val physicalHeightMm = if (debugHeadUnitSpec != null) {
+                ((DEFAULT_PHYSICAL_WIDTH_MM.toFloat() * clampedHeight) / clampedWidth)
+                    .toInt().coerceAtLeast(1)
+            } else {
+                ((DEFAULT_PHYSICAL_HEIGHT_MM.toFloat() * effectiveHeight) / landscapeHeight)
+                    .toInt().coerceAtLeast(1)
+            }
+
+            return ResolvedDisplaySpec(
+                width = clampedWidth,
+                height = clampedHeight,
+                physicalWidthMm = physicalWidthMm,
+                physicalHeightMm = physicalHeightMm,
+                climateBarHeightDp = fit?.climateBarHeightDp ?: ClimateBarLayoutFit.IDEAL_HEIGHT_DP,
+                videoClipTopPx = fit?.videoClipTopPx ?: 0,
+                videoClipBottomPx = fit?.videoClipBottomPx ?: 0,
+            )
+        }
+
+        private fun physicalLandscapeSize(context: Context): Pair<Int, Int> {
             val windowManager = context.getSystemService(WindowManager::class.java)
             val (rawWidth, rawHeight) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val bounds = windowManager?.maximumWindowMetrics?.bounds
@@ -117,30 +187,7 @@ data class ProjectionSessionConfig(
                 val height = if (point.y > 0) point.y else metrics.heightPixels
                 width to height
             }
-
-            val landscapeWidth = maxOf(rawWidth, rawHeight)
-            val landscapeHeight = minOf(rawWidth, rawHeight)
-            val reservedBottomPx = if (climatePanelEnabled) {
-                (ClimateBarHeightDp * context.resources.displayMetrics.density).toInt()
-            } else {
-                0
-            }
-            val effectiveLandscapeHeight = (landscapeHeight - reservedBottomPx).coerceAtLeast(SIZE_ALIGNMENT)
-            val (clampedWidth, clampedHeight) = clampToDecoderSupport(
-                landscapeWidth,
-                effectiveLandscapeHeight,
-                DEFAULT_STREAM_FPS,
-            )
-            val physicalHeightMm = ((DEFAULT_PHYSICAL_HEIGHT_MM.toFloat() * effectiveLandscapeHeight) / landscapeHeight)
-                .toInt()
-                .coerceAtLeast(1)
-
-            return ResolvedDisplaySpec(
-                width = clampedWidth,
-                height = clampedHeight,
-                physicalWidthMm = DEFAULT_PHYSICAL_WIDTH_MM,
-                physicalHeightMm = physicalHeightMm,
-            )
+            return maxOf(rawWidth, rawHeight) to minOf(rawWidth, rawHeight)
         }
 
         private fun clampToDecoderSupport(

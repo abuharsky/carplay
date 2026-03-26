@@ -5,8 +5,8 @@ import com.alexander.carplay.data.automotive.climate.SeatAutoComfortController
 import com.alexander.carplay.domain.model.ClimateSnapshot
 
 class ClimateBarState(
-    private val controller: ClimateController,
-    private val seatAutoComfortController: SeatAutoComfortController,
+    private val controller: ClimateController?,
+    private val seatAutoComfortController: SeatAutoComfortController?,
     private val snapshot: ClimateSnapshot,
 ) {
     val driverTemp: Float
@@ -39,40 +39,40 @@ class ClimateBarState(
         get() = snapshot.isConnected
 
     fun onDriverSeatHeatClick() {
-        seatAutoComfortController.suspendSeatAutomation(
+        seatAutoComfortController?.suspendSeatAutomation(
             isDriver = true,
             reason = "manual driver seat heat click",
         )
-        controller.cycleSeatHeat(isDriver = true)
+        controller?.cycleSeatHeat(isDriver = true)
     }
 
     fun onDriverSeatVentClick() {
-        seatAutoComfortController.suspendSeatAutomation(
+        seatAutoComfortController?.suspendSeatAutomation(
             isDriver = true,
             reason = "manual driver seat vent click",
         )
-        controller.cycleSeatVent(isDriver = true)
+        controller?.cycleSeatVent(isDriver = true)
     }
 
     fun onPassengerSeatHeatClick() {
-        seatAutoComfortController.suspendSeatAutomation(
+        seatAutoComfortController?.suspendSeatAutomation(
             isDriver = false,
             reason = "manual passenger seat heat click",
         )
-        controller.cycleSeatHeat(isDriver = false)
+        controller?.cycleSeatHeat(isDriver = false)
     }
 
     fun onPassengerSeatVentClick() {
-        seatAutoComfortController.suspendSeatAutomation(
+        seatAutoComfortController?.suspendSeatAutomation(
             isDriver = false,
             reason = "manual passenger seat vent click",
         )
-        controller.cycleSeatVent(isDriver = false)
+        controller?.cycleSeatVent(isDriver = false)
     }
 
-    fun onDoorLightClick() = controller.toggleDoorLight()
+    fun onDoorLightClick() = controller?.toggleDoorLight()
 
-    fun onMirrorAutoFoldClick() = controller.toggleMirrorAutoFold()
+    fun onMirrorAutoFoldClick() = controller?.toggleMirrorAutoFold()
 
-    fun onMirrorRearAssistClick() = controller.toggleMirrorRearAssist()
+    fun onMirrorRearAssistClick() = controller?.toggleMirrorRearAssist()
 }

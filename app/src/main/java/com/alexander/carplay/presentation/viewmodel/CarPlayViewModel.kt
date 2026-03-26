@@ -18,8 +18,8 @@ import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseC
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionAdapterNameUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionAutoConnectUseCase
-import com.alexander.carplay.domain.usecase.LoadProjectionAdapterDpiUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionClimatePanelEnabledUseCase
+import com.alexander.carplay.domain.usecase.LoadProjectionCarPlaySafeAreaBottomUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionUiEventsUseCase
@@ -29,8 +29,8 @@ import com.alexander.carplay.domain.usecase.RefreshProjectionRuntimeSettingsUseC
 import com.alexander.carplay.domain.usecase.RequestProjectionReconnectUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionAdapterNameUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionAutoConnectUseCase
-import com.alexander.carplay.domain.usecase.SaveProjectionAdapterDpiUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionClimatePanelEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveProjectionCarPlaySafeAreaBottomUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
 import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
@@ -92,10 +92,10 @@ class CarPlayViewModel(
     private val saveProjectionAdapterNameUseCase: SaveProjectionAdapterNameUseCase,
     private val loadProjectionAutoConnectUseCase: LoadProjectionAutoConnectUseCase,
     private val saveProjectionAutoConnectUseCase: SaveProjectionAutoConnectUseCase,
-    private val loadProjectionAdapterDpiUseCase: LoadProjectionAdapterDpiUseCase,
-    private val saveProjectionAdapterDpiUseCase: SaveProjectionAdapterDpiUseCase,
     private val loadProjectionClimatePanelEnabledUseCase: LoadProjectionClimatePanelEnabledUseCase,
     private val saveProjectionClimatePanelEnabledUseCase: SaveProjectionClimatePanelEnabledUseCase,
+    private val loadProjectionCarPlaySafeAreaBottomUseCase: LoadProjectionCarPlaySafeAreaBottomUseCase,
+    private val saveProjectionCarPlaySafeAreaBottomUseCase: SaveProjectionCarPlaySafeAreaBottomUseCase,
     private val selectProjectionDeviceUseCase: SelectProjectionDeviceUseCase,
     private val cancelProjectionDeviceConnectionUseCase: CancelProjectionDeviceConnectionUseCase,
     private val attachProjectionSurfaceUseCase: AttachProjectionSurfaceUseCase,
@@ -199,12 +199,12 @@ class CarPlayViewModel(
         saveProjectionAutoConnectUseCase(enabled)
     }
 
-    fun loadAdapterDpi(): Int {
-        return loadProjectionAdapterDpiUseCase()
+    fun loadCarPlaySafeAreaBottomDp(): Int {
+        return loadProjectionCarPlaySafeAreaBottomUseCase()
     }
 
-    fun saveAdapterDpi(dpi: Int) {
-        saveProjectionAdapterDpiUseCase(dpi)
+    fun saveCarPlaySafeAreaBottomDp(bottomDp: Int) {
+        saveProjectionCarPlaySafeAreaBottomUseCase(bottomDp)
     }
 
     fun loadClimatePanelEnabled(): Boolean {
@@ -231,6 +231,10 @@ class CarPlayViewModel(
         } else {
             refreshProjectionRuntimeSettingsUseCase()
         }
+    }
+
+    fun requestReconnect() {
+        requestProjectionReconnectUseCase()
     }
 
     fun previewDeviceSettings(settings: ProjectionDeviceSettings) {

@@ -21,6 +21,7 @@ class AudioStreamManager(
 ) {
     companion object {
         private const val SOURCE = "Audio"
+        private const val ROUTE_STOP_GRACE_MS = 1_500L
     }
 
     private enum class StreamKey {
@@ -59,6 +60,7 @@ class AudioStreamManager(
     private val tracks = mutableMapOf<AudioKey, ManagedTrack>()
     private val categories = mutableMapOf<AudioKey, StreamKey>()
     private val protocolVolumeDirectives = mutableMapOf<AudioKey, VolumeDirective>()
+    private val pendingOutputStopDeadlines = mutableMapOf<AudioKey, Long>()
     private val provisionalPlaybackKeys = mutableSetOf<AudioKey>()
     private var currentDeviceSettings: ProjectionDeviceSettings? = null
 
@@ -83,6 +85,7 @@ class AudioStreamManager(
 
     fun handleAudioPacket(packet: AudioPacket) {
         cleanupExpiredVolumeDirectives()
+        cleanupExpiredPendingStops()
 
         packet.command?.let { command ->
             handleCommand(command, AudioKey(packet.decodeType, packet.audioType))
@@ -133,6 +136,7 @@ class AudioStreamManager(
         tracks.clear()
         categories.clear()
         protocolVolumeDirectives.clear()
+        pendingOutputStopDeadlines.clear()
         provisionalPlaybackKeys.clear()
         currentDeviceSettings = null
     }
@@ -150,28 +154,34 @@ class AudioStreamManager(
             Cpc200Protocol.AudioCommand.MEDIA_START -> startStream(audioKey, StreamKey.MEDIA)
 
             Cpc200Protocol.AudioCommand.OUTPUT_STOP -> stopOutputStream(audioKey)
-            Cpc200Protocol.AudioCommand.MEDIA_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.MEDIA_STOP -> markStreamStopping(audioKey)
 
             Cpc200Protocol.AudioCommand.NAVI_START -> startStream(audioKey, StreamKey.NAVI)
-            Cpc200Protocol.AudioCommand.NAVI_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.NAVI_STOP -> markStreamStopping(audioKey)
             Cpc200Protocol.AudioCommand.SIRI_START -> startStream(audioKey, StreamKey.SIRI)
-            Cpc200Protocol.AudioCommand.SIRI_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.SIRI_STOP -> markStreamStopping(audioKey)
             Cpc200Protocol.AudioCommand.PHONE_START -> startStream(audioKey, StreamKey.PHONE)
-            Cpc200Protocol.AudioCommand.PHONE_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.PHONE_STOP -> markStreamStopping(audioKey)
             Cpc200Protocol.AudioCommand.PHONE_INCOMING -> startStream(audioKey, StreamKey.ALERT)
             Cpc200Protocol.AudioCommand.ALERT_START -> startStream(audioKey, StreamKey.ALERT)
-            Cpc200Protocol.AudioCommand.ALERT_STOP -> stopStream(audioKey)
+            Cpc200Protocol.AudioCommand.ALERT_STOP -> markStreamStopping(audioKey)
         }
     }
 
     private fun startOutputStream(audioKey: AudioKey) {
         val existingCategory = categories[audioKey]
-        if (existingCategory != null && existingCategory != StreamKey.MEDIA) {
+        if (existingCategory != null) {
+            pendingOutputStopDeadlines.remove(audioKey)
             logStore.info(
                 SOURCE,
                 "Audio outputStart keeps existing route=$existingCategory key=${audioKey.decodeType}/${audioKey.audioType}",
             )
-            startStream(audioKey, existingCategory)
+            val existingTrack = tracks[audioKey]
+            if (existingTrack == null) {
+                startStream(audioKey, existingCategory)
+            } else if (existingTrack.track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                existingTrack.track.play()
+            }
             return
         }
         startStream(audioKey, StreamKey.MEDIA)
@@ -219,15 +229,25 @@ class AudioStreamManager(
         }
     }
 
-    private fun stopOutputStream(audioKey: AudioKey) {
-        val existingCategory = categories[audioKey]
-        if (existingCategory != null && existingCategory != StreamKey.MEDIA) {
-            logStore.info(
-                SOURCE,
-                "Audio outputStop ignored for active route=$existingCategory key=${audioKey.decodeType}/${audioKey.audioType}",
-            )
-            return
+    private fun cleanupExpiredPendingStops() {
+        if (pendingOutputStopDeadlines.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val iterator = pendingOutputStopDeadlines.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now >= entry.value) {
+                logStore.info(
+                    SOURCE,
+                    "Audio route stop grace expired key=${entry.key.decodeType}/${entry.key.audioType}",
+                )
+                iterator.remove()
+                stopStream(entry.key)
+            }
         }
+    }
+
+    private fun stopOutputStream(audioKey: AudioKey) {
+        pendingOutputStopDeadlines.remove(audioKey)
         stopStream(audioKey)
     }
 
@@ -253,32 +273,61 @@ class AudioStreamManager(
         audioKey: AudioKey,
         streamKey: StreamKey,
     ) {
+        pendingOutputStopDeadlines.remove(audioKey)
         categories[audioKey] = streamKey
         provisionalPlaybackKeys.remove(audioKey)
         val desiredFormat = decodeTypeToFormat(audioKey.decodeType, streamKey) ?: return
         val existingTrack = tracks[audioKey]
         if (existingTrack != null && existingTrack.format != desiredFormat) {
+            logStore.info(
+                SOURCE,
+                "Audio track recreation required: key=${audioKey.decodeType}/${audioKey.audioType} " +
+                    "oldUsage=${describeUsage(existingTrack.format.usage)} newUsage=${describeUsage(desiredFormat.usage)} " +
+                    "oldRate=${existingTrack.format.sampleRate}Hz newRate=${desiredFormat.sampleRate}Hz",
+            )
             releaseManagedTrack(existingTrack)
             tracks.remove(audioKey)
         }
 
         val managedTrack = tracks[audioKey] ?: prepareTrack(audioKey, streamKey) ?: return
-        applyEffects(managedTrack, settingsFor(streamKey))
-        managedTrack.track.play()
+        if (managedTrack.appliedSettings != settingsFor(streamKey) || managedTrack.track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+            applyEffects(managedTrack, settingsFor(streamKey))
+            managedTrack.track.play()
+        }
+        if (existingTrack != null && categories[audioKey] == streamKey && managedTrack.track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+            logStore.info(
+                SOURCE,
+                "Audio stream active: $streamKey key=${audioKey.decodeType}/${audioKey.audioType} " +
+                    "(${managedTrack.format.sampleRate}Hz usage=${describeUsage(managedTrack.format.usage)})",
+            )
+            return
+        }
         logStore.info(
             SOURCE,
-            "Audio stream started: $streamKey key=${audioKey.decodeType}/${audioKey.audioType} (${managedTrack.format.sampleRate}Hz)",
+            "Audio stream started: $streamKey key=${audioKey.decodeType}/${audioKey.audioType} " +
+                "(${managedTrack.format.sampleRate}Hz usage=${describeUsage(managedTrack.format.usage)})",
+        )
+    }
+
+    private fun markStreamStopping(audioKey: AudioKey) {
+        val existingCategory = categories[audioKey] ?: return
+        pendingOutputStopDeadlines[audioKey] = System.currentTimeMillis() + ROUTE_STOP_GRACE_MS
+        logStore.info(
+            SOURCE,
+            "Audio route stop armed: route=$existingCategory key=${audioKey.decodeType}/${audioKey.audioType}",
         )
     }
 
     private fun stopStream(audioKey: AudioKey) {
+        val category = categories[audioKey]
         categories.remove(audioKey)
         provisionalPlaybackKeys.remove(audioKey)
         tracks.remove(audioKey)?.let { managed ->
             releaseManagedTrack(managed)
             logStore.info(
                 SOURCE,
-                "Audio stream stopped: key=${audioKey.decodeType}/${audioKey.audioType}",
+                "Audio stream stopped: route=${category ?: "UNKNOWN"} key=${audioKey.decodeType}/${audioKey.audioType} " +
+                    "usage=${describeUsage(managed.format.usage)}",
             )
         }
     }
@@ -308,16 +357,15 @@ class AudioStreamManager(
         )
         if (minBuffer <= 0) return null
 
+        val contentType = if (streamKey == StreamKey.PHONE) {
+            AudioAttributes.CONTENT_TYPE_SPEECH
+        } else {
+            AudioAttributes.CONTENT_TYPE_MUSIC
+        }
         val audioTrack = AudioTrack(
             AudioAttributes.Builder()
                 .setUsage(format.usage)
-                .setContentType(
-                    if (streamKey == StreamKey.PHONE) {
-                        AudioAttributes.CONTENT_TYPE_SPEECH
-                    } else {
-                        AudioAttributes.CONTENT_TYPE_MUSIC
-                    },
-                )
+                .setContentType(contentType)
                 .build(),
             AudioFormat.Builder()
                 .setSampleRate(format.sampleRate)
@@ -336,6 +384,12 @@ class AudioStreamManager(
             loudnessEnhancer = createLoudnessEnhancer(audioTrack.audioSessionId),
         )
         applyEffects(managedTrack, settingsFor(streamKey))
+        logStore.info(
+            SOURCE,
+            "Audio track prepared: route=$streamKey key=${audioKey.decodeType}/${audioKey.audioType} " +
+                "rate=${format.sampleRate}Hz usage=${describeUsage(format.usage)} " +
+                "content=${describeContentType(contentType)} session=${audioTrack.audioSessionId}",
+        )
         return managedTrack.also { tracks[audioKey] = it }
     }
 
@@ -390,6 +444,18 @@ class AudioStreamManager(
     ): Float {
         val protocolGain = protocolVolumeDirectives[audioKey]?.gain ?: 1f
         return (settings.gainMultiplier * protocolGain).coerceAtLeast(0f)
+    }
+
+    private fun describeUsage(usage: Int): String = when (usage) {
+        AudioAttributes.USAGE_MEDIA -> "MEDIA"
+        AudioAttributes.USAGE_VOICE_COMMUNICATION -> "VOICE_COMMUNICATION"
+        else -> usage.toString()
+    }
+
+    private fun describeContentType(contentType: Int): String = when (contentType) {
+        AudioAttributes.CONTENT_TYPE_MUSIC -> "MUSIC"
+        AudioAttributes.CONTENT_TYPE_SPEECH -> "SPEECH"
+        else -> contentType.toString()
     }
 
     private fun createEqualizer(audioSessionId: Int): Equalizer? {

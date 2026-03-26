@@ -184,7 +184,7 @@ class DongleSessionManager(
         context = appContext,
         adapterName = settingsStore.getAdapterName(),
         climatePanelEnabled = settingsStore.isClimatePanelEnabled(),
-        dpi = settingsStore.getAdapterDpi(),
+        carplaySafeAreaBottomDp = 0,
     )
     private var currentSession: DongleConnectionSession? = null
     private var currentDevice: UsbDevice? = null
@@ -336,8 +336,12 @@ class DongleSessionManager(
     }
 
     fun requestReconnect(reason: String = "manual") {
+        logStore.info(SOURCE, "requestReconnect($reason) started=$started shuttingDown=$shuttingDown")
         executors.session.execute {
-            if (!started) return@execute
+            if (!started) {
+                logStore.info(SOURCE, "requestReconnect($reason) skipped: not started")
+                return@execute
+            }
             armManualVehicleGateBypass(reason)
             restartSessionNow(reason)
         }
@@ -817,11 +821,12 @@ class DongleSessionManager(
     }
 
     private fun emitAutoConnectRequest() {
-        val selectedId = currentSelectedDeviceId
+        val selectedId = resolveSessionDeviceCandidateId()
             ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
             ?.ifBlank { null }
         if (selectedId != null) {
             queueOutbound(Cpc200Protocol.selectDevice(selectedId))
+            logStore.info(SOURCE, "Auto-connect target prepared: ${describeKnownDevice(selectedId)}")
         }
         queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.START_AUTO_CONNECT))
     }
@@ -920,7 +925,7 @@ class DongleSessionManager(
             context = appContext,
             adapterName = settingsStore.getAdapterName(),
             climatePanelEnabled = settingsStore.isClimatePanelEnabled(),
-            dpi = settingsStore.getAdapterDpi(),
+            carplaySafeAreaBottomDp = 0,
         )
         val preferredDeviceId = pendingConnectionDeviceId
             ?: currentSessionDeviceId
@@ -937,7 +942,7 @@ class DongleSessionManager(
             SOURCE,
             "Session config resolved: device=${describeKnownDevice(preferredDeviceId)} " +
                 "audio=${deviceSettings.audioRoute.name} mic=${deviceSettings.micRoute.name} " +
-                "screen=${resolvedConfig.width}x${resolvedConfig.height} dpi=${resolvedConfig.dpi}",
+                "screen=${resolvedConfig.width}x${resolvedConfig.height} safeArea=${resolvedConfig.carplaySafeAreaBottomDp}dp dpi=${resolvedConfig.dpi}",
         )
         return resolvedConfig
     }
@@ -1437,6 +1442,9 @@ class DongleSessionManager(
                 }
                 logStore.info(SOURCE, "Phase message: $phase")
                 flowController.onPhase(phase)
+                if (phase == 8) {
+                    syncVideoFocus("phase 8")
+                }
             }
 
             Cpc200Protocol.MessageType.UNPLUGGED -> {
@@ -1651,7 +1659,7 @@ class DongleSessionManager(
         sessionConfig = buildSessionConfig()
         logStore.info(
             SOURCE,
-            "Reconnect session config rebuilt: screen=${sessionConfig.width}x${sessionConfig.height} dpi=${sessionConfig.dpi} climatePanel=${sessionConfig.climatePanelEnabled}",
+            "Reconnect session config rebuilt: screen=${sessionConfig.width}x${sessionConfig.height} safeArea=${sessionConfig.carplaySafeAreaBottomDp}dp dpi=${sessionConfig.dpi} climatePanel=${sessionConfig.climatePanelEnabled}",
         )
         when (restartMode) {
             SessionMode.USB -> connectOrRequestPermission(reason)
@@ -1813,6 +1821,10 @@ class DongleSessionManager(
                 ProjectionMicRoute.PHONE
             },
             appliedClimatePanelEnabled = sessionConfig.climatePanelEnabled,
+            appliedClimateBarHeightDp = sessionConfig.climateBarHeightDp,
+            appliedVideoClipTopPx = sessionConfig.videoClipTopPx,
+            appliedVideoClipBottomPx = sessionConfig.videoClipBottomPx,
+            appliedCarPlaySafeAreaBottomDp = sessionConfig.carplaySafeAreaBottomDp,
             videoWidth = videoWidth,
             videoHeight = videoHeight,
             surfaceAttached = surfaceAttached,

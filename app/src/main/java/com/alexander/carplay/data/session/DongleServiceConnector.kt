@@ -53,6 +53,7 @@ class DongleServiceConnector(
     private var bound = false
     private var pendingSurface: Surface? = null
     private var pendingVideoStreamEnabled: Boolean? = null
+    private var pendingReconnect = false
     private var lastLoggedSnapshotSignature: String? = null
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
@@ -92,6 +93,11 @@ class DongleServiceConnector(
             pendingVideoStreamEnabled?.let { enabled ->
                 logStore.info(SOURCE, "Flushing pending video target=$enabled after bind")
                 binder?.setVideoStreamEnabled(enabled)
+            }
+            if (pendingReconnect) {
+                logStore.info(SOURCE, "Flushing pending reconnect after bind")
+                binder?.requestReconnect()
+                pendingReconnect = false
             }
         }
 
@@ -159,6 +165,11 @@ class DongleServiceConnector(
 
     fun requestReconnect() {
         ensureServiceStarted()
+        val binderReady = binder != null
+        logStore.info(SOURCE, "requestReconnect binderReady=$binderReady")
+        if (!binderReady) {
+            pendingReconnect = true
+        }
         binder?.requestReconnect()
     }
 

@@ -147,6 +147,16 @@ class H264Renderer(
         }
     }
 
+    fun trimMemory(reason: String) {
+        log("Aggressive video memory trim requested: $reason")
+        executors.codecOutput.execute {
+            synchronized(lock) {
+                releaseCodecLocked()
+                ringBuffer.trimToMinSize()
+            }
+        }
+    }
+
     fun release() {
         synchronized(lock) {
             releaseCodecLocked()

@@ -14,6 +14,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.alexander.carplay.CarPlayApp
 import com.alexander.carplay.data.logging.DiagnosticLogStore
+import com.alexander.carplay.data.logging.ProcessDiagnostics
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModel
 import com.alexander.carplay.presentation.viewmodel.CarPlayViewModelFactory
 
@@ -34,7 +35,7 @@ class CarPlayActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         logStore.info(
             LOG_SOURCE,
-            "onCreate taskId=$taskId changingConfig=$isChangingConfigurations intent=${describeIntent(intent)}",
+            "onCreate taskId=$taskId changingConfig=$isChangingConfigurations instance=${System.identityHashCode(this)} intent=${describeIntent(intent)} | ${ProcessDiagnostics.describeCurrentProcess()}",
         )
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
@@ -51,7 +52,7 @@ class CarPlayActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        logStore.info(LOG_SOURCE, "onStart taskId=$taskId")
+        logStore.info(LOG_SOURCE, "onStart taskId=$taskId instance=${System.identityHashCode(this)}")
         hideSystemBars()
         viewModel.onStart()
         viewModel.onBindUi()
@@ -59,7 +60,10 @@ class CarPlayActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        logStore.info(LOG_SOURCE, "onResume taskId=$taskId hasFocus=${window.decorView.hasWindowFocus()}")
+        logStore.info(
+            LOG_SOURCE,
+            "onResume taskId=$taskId instance=${System.identityHashCode(this)} hasFocus=${window.decorView.hasWindowFocus()}",
+        )
         hideSystemBars()
     }
 
@@ -67,14 +71,17 @@ class CarPlayActivity : AppCompatActivity() {
         super.onStop()
         logStore.info(
             LOG_SOURCE,
-            "onStop taskId=$taskId changingConfig=$isChangingConfigurations finishing=$isFinishing",
+            "onStop taskId=$taskId instance=${System.identityHashCode(this)} changingConfig=$isChangingConfigurations finishing=$isFinishing",
         )
         viewModel.onUnbindUi()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        logStore.info(LOG_SOURCE, "onWindowFocusChanged hasFocus=$hasFocus taskId=$taskId")
+        logStore.info(
+            LOG_SOURCE,
+            "onWindowFocusChanged hasFocus=$hasFocus taskId=$taskId instance=${System.identityHashCode(this)}",
+        )
         if (hasFocus) {
             hideSystemBars()
             viewModel.onWindowFocusGained()
@@ -83,7 +90,7 @@ class CarPlayActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        logStore.info(LOG_SOURCE, "onNewIntent ${describeIntent(intent)}")
+        logStore.info(LOG_SOURCE, "onNewIntent ${describeIntent(intent)} instance=${System.identityHashCode(this)}")
         setIntent(intent)
         maybeStartReplayFromIntent(intent, initial = false)
     }
@@ -92,7 +99,7 @@ class CarPlayActivity : AppCompatActivity() {
         super.onDestroy()
         logStore.info(
             LOG_SOURCE,
-            "onDestroy taskId=$taskId changingConfig=$isChangingConfigurations finishing=$isFinishing",
+            "onDestroy taskId=$taskId instance=${System.identityHashCode(this)} changingConfig=$isChangingConfigurations finishing=$isFinishing",
         )
     }
 

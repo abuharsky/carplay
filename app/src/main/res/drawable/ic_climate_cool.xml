@@ -1,55 +1,7 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M12,4.5V19.5" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M5.5,8.25L18.5,15.75" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M5.5,15.75L18.5,8.25" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M12,4.5L10.2,6.3" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M12,4.5L13.8,6.3" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M12,19.5L10.2,17.7" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M12,19.5L13.8,17.7" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:height="24dp" android:viewportHeight="100" android:viewportWidth="100" android:width="24dp">
+      
+    <path android:fillColor="#000000" android:pathData="M80.56,15.69C81.35,15.69 82.13,15.7 82.94,15.7C85,16 85,16 87,18C86.64,25.03 84.99,31.61 83.2,38.39C82.78,39.98 82.78,39.98 82.36,41.6C81.77,43.83 81.18,46.06 80.59,48.29C79.69,51.69 78.8,55.09 77.92,58.5C77.35,60.67 76.77,62.84 76.2,65.01C75.94,66.03 75.68,67.04 75.41,68.08C72.17,80.07 72.17,80.07 67.13,83.14C64.85,84.06 63.22,84.27 60.77,84.31C59.94,84.32 59.12,84.34 58.27,84.36C56.95,84.37 56.95,84.37 55.6,84.37C54.68,84.38 53.77,84.39 52.82,84.4C50.89,84.42 48.96,84.42 47.03,84.43C44.07,84.44 41.12,84.49 38.17,84.54C36.29,84.55 34.41,84.56 32.53,84.56C31.65,84.58 30.77,84.6 29.86,84.62C25.39,84.59 23.59,84.48 19.99,81.58C15.95,76.35 15.95,76.35 16.12,71.44C17,68 17,68 18.56,66.19C25.22,62.94 31.86,62.71 39.12,62.81C40.42,62.82 40.42,62.82 41.75,62.82C46.27,62.85 50.55,63.09 55,64C55.24,63.21 55.48,62.41 55.73,61.59C57.87,54.83 60.03,49.46 64.7,44.02C69.61,37.86 71.09,32.47 72.02,24.8C72.7,19.46 72.7,19.46 74.29,17.02C76.5,15.7 78,15.64 80.56,15.69Z"/>
+      
+    <path android:fillColor="#000000" android:pathData="M35.88,24.69C38.78,24.74 39.69,24.77 42.06,26.57C43.36,29.96 42.74,32.5 41.99,36C42.51,35.05 43.03,34.1 43.56,33.13C45.99,30 45.99,30 49.44,28.44C53,28 53,28 55.88,29.31C58,31 58,31 59,32C59.58,39.23 59.58,39.23 57.43,42.07C54.03,43.37 51.51,42.74 47.99,42C48.76,42.39 49.53,42.79 50.31,43.19C53.35,45.24 54.58,46.63 56,50C55.88,53.11 55.47,55.18 53.93,57.88C50.78,59.72 47.56,59.68 43.99,59C41.99,57.25 41.99,57.25 40.99,55C40.99,53.68 40.99,52.36 40.99,51C40.47,51.64 39.92,52.28 39.38,52.94C36.47,55.47 34.83,55.92 30.99,56C28.67,54.86 26.83,53.83 24.99,52C24.49,46.77 24.49,46.77 24.99,44C27.83,41.55 29.26,41 32.99,41C32.37,40.47 31.73,39.93 31.07,39.38C28.53,36.47 28.08,34.84 27.99,31C30.89,25.09 30.89,25.09 35.88,24.69ZM40.99,41C40.99,41.66 40.99,42.32 40.99,43C41.65,43 42.33,43 42.99,43C42.99,42.34 42.99,41.68 42.99,41C42.35,41 41.67,41 40.99,41ZM41.99,47C42.99,49 42.99,49 42.99,49Z"/>
+    
 </vector>
