@@ -41,6 +41,7 @@ import com.alexander.carplay.domain.model.ClimateSnapshot
 
 const val ClimateBarHeightDp = 54
 val ClimateBarHeight = ClimateBarHeightDp.dp
+private val ClimateControlHeight = 46.dp
 
 @Composable
 fun rememberClimateBarState(enabled: Boolean): ClimateBarState {
@@ -270,9 +271,9 @@ private fun ClimateIndicatorsCard(
 ) {
     PanelCard(
         modifier = modifier,
-        minHeight = 42.dp,
+        minHeight = ClimateControlHeight,
         horizontalPadding = 16.dp,
-        verticalPadding = 5.dp,
+        verticalPadding = 0.dp,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -410,8 +411,8 @@ private fun SeatActionButton(
                 shape = RoundedCornerShape(12.dp),
             )
             .clickable(enabled = connected, onClick = onClick)
-            .defaultMinSize(minHeight = 38.dp)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .height(ClimateControlHeight)
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
@@ -422,7 +423,7 @@ private fun SeatActionButton(
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(36.dp),
+                modifier = Modifier.size(40.dp),
                 tint = when {
                     !connected -> Color.White.copy(alpha = 0.28f)
                     isActive -> accent
@@ -433,7 +434,7 @@ private fun SeatActionButton(
                 repeat(3) { index ->
                     Box(
                         modifier = Modifier
-                            .size(7.dp)
+                            .size(10.dp)
                             .clip(CircleShape)
                             .background(
                                 if (connected && index < level.coerceIn(0, 3)) {
@@ -458,6 +459,14 @@ private fun QuickToggleChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val iconSize = when (iconRes) {
+        R.drawable.ic_climate_mirror_fold,
+        R.drawable.ic_climate_mirror_assist,
+        -> 46.dp
+
+        else -> 42.dp
+    }
+
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -478,7 +487,7 @@ private fun QuickToggleChip(
                 shape = RoundedCornerShape(12.dp),
             )
             .clickable(enabled = connected, onClick = onClick)
-            .defaultMinSize(minHeight = 40.dp),
+            .height(ClimateControlHeight),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
@@ -491,7 +500,7 @@ private fun QuickToggleChip(
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(36.dp),
+                modifier = Modifier.size(iconSize),
                 tint = when {
                     !connected -> Color.White.copy(alpha = 0.28f)
                     active -> Color.White
@@ -501,7 +510,7 @@ private fun QuickToggleChip(
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .size(8.dp)
+                    .size(11.dp)
                     .clip(CircleShape)
                     .background(
                         when {

@@ -18,12 +18,15 @@ data class ProjectionDebugHeadUnitSpec(
  * device (e.g. Samsung phone for development). Returns null on a real car.
  */
 object ProjectionDebugHeadUnitMode {
+    private const val ENABLED = false
     private const val CONTAINER_SCALE = 0.6f
     private const val SIMULATED_WIDTH = 1920
     private const val SIMULATED_HEIGHT = 720
     private const val SIMULATED_DENSITY = 1.0f
 
     fun resolve(context: Context): ProjectionDebugHeadUnitSpec? {
+        if (!ENABLED) return null
+
         val appHasAndroidCarRuntime = runCatching {
             (context.applicationContext as? CarPlayApp)?.appContainer?.hasAndroidCarRuntime
         }.getOrNull()

@@ -944,8 +944,8 @@ private fun ConnectionOverlay(
 
                 OverlaySettingsButton(
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 28.dp, bottom = overlayBottomOffset + 6.dp),
+                        .align(Alignment.TopEnd)
+                        .padding(top = 22.dp, end = 22.dp),
                     onClick = onSettingsClick,
                 )
             }
@@ -1240,18 +1240,20 @@ private fun OverlaySettingsButton(
 ) {
     Box(
         modifier = modifier
-            .requiredSize(40.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.055f), CircleShape)
-            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = 0.035f), RoundedCornerShape(16.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            painter = painterResource(id = R.drawable.ic_overlay_settings),
-            contentDescription = stringResource(id = R.string.overlay_open_settings),
-            modifier = Modifier.size(20.dp),
-            tint = Color.White.copy(alpha = 0.64f),
+        Text(
+            text = stringResource(id = R.string.overlay_settings_label),
+            color = Color.White.copy(alpha = 0.54f),
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.2.sp,
+            ),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
         )
     }
 }

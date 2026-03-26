@@ -26,6 +26,7 @@
     <string name="overlay_device_active">Подключено</string>
     <string name="overlay_device_selected">Готово к подключению</string>
     <string name="overlay_open_settings">Открыть настройки</string>
+    <string name="overlay_settings_label">Настройки</string>
     <string name="cancel_device_connection">Прервать подключение</string>
     <string name="settings_sheet_title">Настройки адаптера</string>
     <string name="settings_sheet_default_device">Профиль нового iPhone</string>
