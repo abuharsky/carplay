@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,6 +83,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -1793,18 +1795,21 @@ private fun SeatAutoComfortSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
             contentPadding = PaddingValues(bottom = 4.dp),
         ) {
             item {
-                SeatAutoComfortCard(
+                SeatAutoComfortGroup(
                     title = stringResource(id = R.string.settings_seat_left_title),
                     settings = driverSettings,
                     onSettingsChange = onDriverSettingsChanged,
                 )
             }
             item {
-                SeatAutoComfortCard(
+                SettingsSubsectionDivider()
+            }
+            item {
+                SeatAutoComfortGroup(
                     title = stringResource(id = R.string.settings_seat_right_title),
                     settings = passengerSettings,
                     onSettingsChange = onPassengerSettingsChanged,
@@ -1815,45 +1820,38 @@ private fun SeatAutoComfortSection(
 }
 
 @Composable
-private fun SeatAutoComfortCard(
+private fun SeatAutoComfortGroup(
     title: String,
     settings: ProjectionSeatAutoComfortSettings,
     onSettingsChange: (ProjectionSeatAutoComfortSettings) -> Unit,
 ) {
-    Surface(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(26.dp),
-        color = Color.White.copy(alpha = 0.045f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = title,
-                color = Color.White,
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-            )
+        Text(
+            text = title,
+            color = Color.White,
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+        )
 
-            SeatAutoModeBlock(
-                title = stringResource(id = R.string.settings_seat_auto_heat_title),
-                thresholdLabel = stringResource(id = R.string.settings_seat_auto_threshold_until_label),
-                settings = settings.heat,
-                thresholdOptions = AutoSeatHeatThresholdOptions,
-                onSettingsChange = { updated -> onSettingsChange(settings.copy(heat = updated)) },
-            )
+        SeatAutoModeBlock(
+            title = stringResource(id = R.string.settings_seat_auto_heat_title),
+            thresholdLabel = stringResource(id = R.string.settings_seat_auto_threshold_until_label),
+            settings = settings.heat,
+            thresholdOptions = AutoSeatHeatThresholdOptions,
+            onSettingsChange = { updated -> onSettingsChange(settings.copy(heat = updated)) },
+        )
 
-            SeatAutoModeBlock(
-                title = stringResource(id = R.string.settings_seat_auto_vent_title),
-                thresholdLabel = stringResource(id = R.string.settings_seat_auto_threshold_from_label),
-                settings = settings.vent,
-                thresholdOptions = AutoSeatVentThresholdOptions,
-                onSettingsChange = { updated -> onSettingsChange(settings.copy(vent = updated)) },
-            )
-        }
+        SettingsSubsectionDivider()
+
+        SeatAutoModeBlock(
+            title = stringResource(id = R.string.settings_seat_auto_vent_title),
+            thresholdLabel = stringResource(id = R.string.settings_seat_auto_threshold_from_label),
+            settings = settings.vent,
+            thresholdOptions = AutoSeatVentThresholdOptions,
+            onSettingsChange = { updated -> onSettingsChange(settings.copy(vent = updated)) },
+        )
     }
 }
 
@@ -1872,107 +1870,98 @@ private fun SeatAutoModeBlock(
         )
     }
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        color = Color.White.copy(alpha = 0.04f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (settings.enabled) 1f else 0.72f),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                    modifier = Modifier.weight(1f),
-                )
-                AdapterToggleSwitch(
-                    checked = settings.enabled,
-                    onCheckedChange = { enabled -> onSettingsChange(settings.copy(enabled = enabled)) },
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .alpha(if (settings.enabled) 1f else 0.7f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SeatAutoValueChip(
-                    modifier = Modifier.weight(1f),
-                    label = thresholdLabel,
-                    value = "${settings.thresholdC}°C",
-                    onClick = {
-                        onSettingsChange(
-                            settings.copy(
-                                thresholdC = cycleOption(thresholdOptions, settings.thresholdC),
-                            ),
-                        )
-                    },
-                )
-                SeatAutoValueChip(
-                    modifier = Modifier.weight(1f),
-                    label = stringResource(id = R.string.settings_seat_auto_level_label),
-                    value = stringResource(
-                        id = R.string.settings_seat_auto_level_value,
-                        settings.startLevel,
-                    ),
-                    onClick = {
-                        onSettingsChange(
-                            settings.copy(
-                                startLevel = cycleOption(AutoSeatStartLevelOptions, settings.startLevel),
-                            ),
-                        )
-                    },
-                )
-                SeatAutoValueChip(
-                    modifier = Modifier.weight(1f),
-                    label = stringResource(id = R.string.settings_seat_auto_duration_label),
-                    value = stringResource(
-                        id = R.string.settings_seat_auto_duration_value,
-                        settings.durationMinutes,
-                    ),
-                    onClick = {
-                        onSettingsChange(
-                            settings.copy(
-                                durationMinutes = cycleOption(AutoSeatDurationOptions, settings.durationMinutes),
-                            ),
-                        )
-                    },
-                )
-            }
-
-            val decayLabel = stringResource(id = R.string.settings_seat_auto_decay_label)
-            val decayStages = decaySummary.map { stage ->
-                stringResource(
-                    id = R.string.settings_seat_auto_decay_stage_value,
-                    stage.minutes,
-                    stage.level,
-                )
-            }
-
             Text(
-                text = buildString {
-                    append(decayLabel)
-                    append(": ")
-                    append(decayStages.joinToString(separator = " \u2192 "))
-                },
-                color = Color.White.copy(alpha = if (settings.enabled) 0.58f else 0.38f),
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 17.sp,
-                ),
+                text = title,
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.weight(1f),
+            )
+            AdapterToggleSwitch(
+                checked = settings.enabled,
+                onCheckedChange = { enabled -> onSettingsChange(settings.copy(enabled = enabled)) },
             )
         }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SeatAutoValueChip(
+                modifier = Modifier.weight(1f),
+                label = thresholdLabel,
+                value = "${settings.thresholdC}°C",
+                onClick = {
+                    onSettingsChange(
+                        settings.copy(
+                            thresholdC = cycleOption(thresholdOptions, settings.thresholdC),
+                        ),
+                    )
+                },
+            )
+            SeatAutoValueChip(
+                modifier = Modifier.weight(1f),
+                label = stringResource(id = R.string.settings_seat_auto_level_label),
+                value = stringResource(
+                    id = R.string.settings_seat_auto_level_value,
+                    settings.startLevel,
+                ),
+                onClick = {
+                    onSettingsChange(
+                        settings.copy(
+                            startLevel = cycleOption(AutoSeatStartLevelOptions, settings.startLevel),
+                        ),
+                    )
+                },
+            )
+            SeatAutoValueChip(
+                modifier = Modifier.weight(1f),
+                label = stringResource(id = R.string.settings_seat_auto_duration_label),
+                value = stringResource(
+                    id = R.string.settings_seat_auto_duration_value,
+                    settings.durationMinutes,
+                ),
+                onClick = {
+                    onSettingsChange(
+                        settings.copy(
+                            durationMinutes = cycleOption(AutoSeatDurationOptions, settings.durationMinutes),
+                        ),
+                    )
+                },
+            )
+        }
+
+        val decayLabel = stringResource(id = R.string.settings_seat_auto_decay_label)
+        val decayStages = decaySummary.map { stage ->
+            stringResource(
+                id = R.string.settings_seat_auto_decay_stage_value,
+                stage.minutes,
+                stage.level,
+            )
+        }
+
+        Text(
+            text = buildString {
+                append(decayLabel)
+                append(": ")
+                append(decayStages.joinToString(separator = " \u2192 "))
+            },
+            color = Color.White.copy(alpha = if (settings.enabled) 0.58f else 0.38f),
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontWeight = FontWeight.Medium,
+                lineHeight = 17.sp,
+            ),
+        )
     }
 }
 
@@ -2013,6 +2002,35 @@ private fun SeatAutoValueChip(
 }
 
 @Composable
+private fun SettingsSubsectionDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Color.White.copy(alpha = 0.08f)),
+    )
+}
+
+@Composable
+private fun FlatSettingsSubsection(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text(
+            text = title,
+            color = Color.White,
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+        )
+        content()
+    }
+}
+
+@Composable
 private fun AdapterIdentitySection(
     adapterName: String,
     onAdapterNameChange: (String) -> Unit,
@@ -2029,64 +2047,54 @@ private fun AdapterIdentitySection(
         title = "Адаптер",
         subtitle = "Имя для box, Wi-Fi и Bluetooth",
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.05f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)),
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            BasicTextField(
-                value = adapterName,
-                onValueChange = onAdapterNameChange,
-                singleLine = true,
-                textStyle = MaterialTheme.typography.headlineSmall.copy(
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                ),
-                cursorBrush = SolidColor(Color.White),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
-                decorationBox = { innerTextField ->
-                    if (adapterName.isBlank()) {
-                        Text(
-                            text = "Carlink-1234",
-                            color = Color.White.copy(alpha = 0.32f),
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-                        )
-                    }
-                    innerTextField()
-                },
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                color = Color.White.copy(alpha = 0.045f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+            ) {
+                BasicTextField(
+                    value = adapterName,
+                    onValueChange = onAdapterNameChange,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.headlineSmall.copy(
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    cursorBrush = SolidColor(Color.White),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    decorationBox = { innerTextField ->
+                        if (adapterName.isBlank()) {
+                            Text(
+                                text = "Carlink-1234",
+                                color = Color.White.copy(alpha = 0.32f),
+                                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                        }
+                        innerTextField()
+                    },
+                )
+            }
+
+            AdapterToggleRow(
+                title = stringResource(id = R.string.settings_auto_connect),
+                checked = autoConnectEnabled,
+                onCheckedChange = onAutoConnectChanged,
             )
-        }
 
-        Spacer(modifier = Modifier.height(18.dp))
+            SettingsSubsectionDivider()
 
-        AdapterToggleRow(
-            title = stringResource(id = R.string.settings_auto_connect),
-            checked = autoConnectEnabled,
-            onCheckedChange = onAutoConnectChanged,
-        )
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        HeaderButton(
-            label = stringResource(id = R.string.settings_disconnect),
-            onClick = onDisconnect,
-            fullWidth = true,
-        )
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.045f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        ) {
             Column(
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
                     text = stringResource(id = R.string.settings_background_title),
@@ -2111,6 +2119,12 @@ private fun AdapterIdentitySection(
                     fullWidth = true,
                 )
             }
+
+            HeaderButton(
+                label = stringResource(id = R.string.settings_disconnect),
+                onClick = onDisconnect,
+                fullWidth = true,
+            )
         }
     }
 }
@@ -2171,9 +2185,9 @@ private fun AudioProfilesSection(
     selectedPlayer: ProjectionAudioPlayerType,
     onSelectPlayer: (ProjectionAudioPlayerType) -> Unit,
 ) {
-    SettingsSectionCard(
-        modifier = modifier,
+    FlatSettingsSubsection(
         title = stringResource(id = R.string.settings_players_title),
+        modifier = modifier,
     ) {
         LazyColumn(
             modifier = Modifier
@@ -2211,7 +2225,7 @@ private fun AudioProfilesSection(
                             Text(
                                 text = playerLabel(player),
                                 color = if (isSelected) Color(0xFF09111E) else Color.White,
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             )
                             Text(
                                 text = stringResource(id = R.string.settings_player_volume_template, volumeLabel),
@@ -2220,7 +2234,7 @@ private fun AudioProfilesSection(
                                 } else {
                                     Color.White.copy(alpha = 0.56f)
                                 },
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                             )
                         }
                         if (isSelected) {
@@ -2246,9 +2260,9 @@ private fun PlayerEnhancementSection(
     onLoudnessChanged: (Int) -> Unit,
     onBassChanged: (Int) -> Unit,
 ) {
-    SettingsSectionCard(
-        modifier = modifier,
+    FlatSettingsSubsection(
         title = stringResource(id = R.string.settings_player_enhancement_title, playerLabel(selectedPlayer)),
+        modifier = modifier,
     ) {
         Row(
             modifier = Modifier
@@ -2262,6 +2276,7 @@ private fun PlayerEnhancementSection(
                 valueLabel = formatVolumePercent(playerSettings.gainMultiplier),
                 value = playerSettings.gainMultiplier,
                 valueRange = 0f..3f,
+                stepSize = 0.05f,
                 onValueChange = onGainChanged,
             )
             VerticalControlSlider(
@@ -2270,6 +2285,7 @@ private fun PlayerEnhancementSection(
                 valueLabel = "${playerSettings.loudnessBoostPercent}%",
                 value = playerSettings.loudnessBoostPercent.toFloat(),
                 valueRange = 0f..100f,
+                stepSize = 1f,
                 onValueChange = { onLoudnessChanged(it.roundToInt()) },
             )
             VerticalControlSlider(
@@ -2278,6 +2294,7 @@ private fun PlayerEnhancementSection(
                 valueLabel = "${playerSettings.bassBoostPercent}%",
                 value = playerSettings.bassBoostPercent.toFloat(),
                 valueRange = 0f..100f,
+                stepSize = 1f,
                 onValueChange = { onBassChanged(it.roundToInt()) },
             )
         }
@@ -2293,9 +2310,9 @@ private fun EqualizerSection(
     onBandChange: (Int, Float) -> Unit,
     onPresetSelect: (ProjectionEqPreset) -> Unit,
 ) {
-    SettingsSectionCard(
-        modifier = modifier,
+    FlatSettingsSubsection(
         title = "Эквалайзер: ${playerLabel(selectedPlayer)}",
+        modifier = modifier,
     ) {
         Row(
             modifier = Modifier
@@ -2345,47 +2362,40 @@ private fun PresetSidebar(
         ProjectionEqPreset.CUSTOM,
     )
 
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
-        color = Color.White.copy(alpha = 0.04f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 14.dp),
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(presets.size) { index ->
-                    val preset = presets[index]
-                    val selectedChip = preset == selected
-                    Surface(
+            items(presets.size) { index ->
+                val preset = presets[index]
+                val selectedChip = preset == selected
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    color = if (selectedChip) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.05f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        Color.White.copy(alpha = if (selectedChip) 0.10f else 0.06f),
+                    ),
+                ) {
+                    Text(
+                        text = presetLabel(preset),
+                        color = if (selectedChip) Color(0xFF09111E) else Color.White.copy(alpha = 0.84f),
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(18.dp),
-                        color = if (selectedChip) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.05f),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            Color.White.copy(alpha = if (selectedChip) 0.10f else 0.06f),
-                        ),
-                    ) {
-                        Text(
-                            text = presetLabel(preset),
-                            color = if (selectedChip) Color(0xFF09111E) else Color.White.copy(alpha = 0.84f),
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                            modifier = Modifier
-                                .clickable { onSelect(preset) }
-                                .fillMaxSize()
-                                .wrapContentHeight(Alignment.CenterVertically)
-                                .padding(horizontal = 16.dp),
-                            textAlign = TextAlign.Start,
-                        )
-                    }
+                            .clickable { onSelect(preset) }
+                            .fillMaxSize()
+                            .wrapContentHeight(Alignment.CenterVertically)
+                            .padding(horizontal = 16.dp),
+                        textAlign = TextAlign.Start,
+                    )
                 }
             }
         }
@@ -2403,38 +2413,31 @@ private fun VerticalEqEditor(
     }
     val bandGap = 6.dp
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = Color.White.copy(alpha = 0.04f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.04f)),
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+                .fillMaxWidth()
+                .weight(1f),
         ) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) {
-                val bandWidth = ((maxWidth - bandGap * (labels.size - 1)) / labels.size)
-                    .coerceAtMost(72.dp)
+            val bandWidth = ((maxWidth - bandGap * (labels.size - 1)) / labels.size)
+                .coerceAtMost(72.dp)
 
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(bandGap),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    labels.forEachIndexed { index, label ->
-                        VerticalEqBand(
-                            width = bandWidth,
-                            label = label,
-                            value = bandsDb.getOrElse(index) { 0f },
-                            onValueChange = { onBandChange(index, it) },
-                        )
-                    }
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(bandGap),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                labels.forEachIndexed { index, label ->
+                    VerticalEqBand(
+                        width = bandWidth,
+                        label = label,
+                        value = bandsDb.getOrElse(index) { 0f },
+                        onValueChange = { onBandChange(index, it) },
+                    )
                 }
             }
         }
@@ -2523,6 +2526,7 @@ private fun MicrophoneSection(
                 valueLabel = formatGain(gainMultiplier),
                 value = gainMultiplier,
                 valueRange = 1f..3f,
+                stepSize = 0.1f,
                 onValueChange = onGainChanged,
             )
         }
@@ -2538,16 +2542,16 @@ private fun DiagnosticsSettingsSection(
         modifier = modifier,
         title = stringResource(id = R.string.logs_title),
     ) {
-        Surface(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White.copy(alpha = 0.04f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
         ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color.White.copy(alpha = 0.03f)),
                 contentPadding = PaddingValues(16.dp),
             ) {
                 item {
@@ -2569,6 +2573,7 @@ private fun VerticalControlSlider(
     valueLabel: String,
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
+    stepSize: Float? = null,
     onValueChange: (Float) -> Unit,
 ) {
     val animatedValue by animateFloatAsState(
@@ -2576,34 +2581,88 @@ private fun VerticalControlSlider(
         animationSpec = tween(140),
         label = "verticalControlValue",
     )
+    val safeStepSize = stepSize?.takeIf { it > 0f }
+    val canIncrement = safeStepSize != null && value < valueRange.endInclusive
+    val canDecrement = safeStepSize != null && value > valueRange.start
 
-    Surface(
-        modifier = modifier.fillMaxHeight(),
-        shape = RoundedCornerShape(24.dp),
-        color = Color.White.copy(alpha = 0.04f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+    fun stepValue(delta: Float) {
+        val nextValue = if (safeStepSize != null) {
+            val currentStep = ((value - valueRange.start) / safeStepSize).roundToInt()
+            val targetStep = currentStep + if (delta > 0f) 1 else -1
+            (valueRange.start + (targetStep * safeStepSize))
+                .coerceIn(valueRange.start, valueRange.endInclusive)
+        } else {
+            (value + delta).coerceIn(valueRange.start, valueRange.endInclusive)
+        }
+        onValueChange(nextValue)
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = title,
-                color = Color.White.copy(alpha = 0.82f),
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                textAlign = TextAlign.Center,
-            )
+        Text(
+            text = title,
+            color = Color.White.copy(alpha = 0.82f),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            textAlign = TextAlign.Center,
+        )
 
-            Text(
-                text = valueLabel,
-                color = Color.White,
-                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                textAlign = TextAlign.Center,
-            )
+        Text(
+            text = valueLabel,
+            color = Color.White,
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+            textAlign = TextAlign.Center,
+        )
 
+        if (safeStepSize != null) {
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(76.dp)
+                        .fillMaxHeight(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    FilledVerticalSlider(
+                        value = animatedValue,
+                        valueRange = valueRange,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(76.dp),
+                        activeColor = Color.White,
+                        inactiveColor = Color.White.copy(alpha = 0.10f),
+                        onValueChange = onValueChange,
+                    )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    StepAdjustButton(
+                        direction = StepAdjustDirection.Up,
+                        enabled = canIncrement,
+                        onClick = { stepValue(safeStepSize) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    StepAdjustButton(
+                        direction = StepAdjustDirection.Down,
+                        enabled = canDecrement,
+                        onClick = { stepValue(-safeStepSize) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        } else {
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2621,6 +2680,47 @@ private fun VerticalControlSlider(
                     onValueChange = onValueChange,
                 )
             }
+        }
+    }
+}
+
+private enum class StepAdjustDirection {
+    Up,
+    Down,
+}
+
+@Composable
+private fun StepAdjustButton(
+    direction: StepAdjustDirection,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White.copy(alpha = if (enabled) 0.09f else 0.035f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            Color.White.copy(alpha = if (enabled) 0.08f else 0.04f),
+        ),
+        modifier = modifier.alpha(if (enabled) 1f else 0.55f),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .defaultMinSize(minWidth = 42.dp, minHeight = 68.dp)
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(vertical = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_overlay_chevron_down),
+                contentDescription = null,
+                tint = Color.White.copy(alpha = if (enabled) 0.92f else 0.5f),
+                modifier = Modifier
+                    .size(18.dp)
+                    .rotate(if (direction == StepAdjustDirection.Up) 180f else 0f),
+            )
         }
     }
 }

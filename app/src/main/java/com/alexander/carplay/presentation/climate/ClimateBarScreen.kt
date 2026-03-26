@@ -102,16 +102,6 @@ fun ClimateBarScreen(
                 .height(ClimateBarHeight)
                 .padding(start = 8.dp, end = 8.dp, top = 4.dp),
         ) {
-            ClimateIndicatorsCard(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .width(238.dp),
-                cabinTemp = formatAmbientTemp(state.cabinTemp),
-                airIconRes = fanDirectionIconRes(state.fanDirection),
-                fanSpeed = state.fanSpeed,
-                connected = state.isConnected,
-            )
-
             Row(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
@@ -157,7 +147,7 @@ fun ClimateBarScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     QuickToggleChip(
-                        modifier = Modifier.width(135.dp),
+                        modifier = Modifier.width(124.dp),
                         iconRes = R.drawable.ic_climate_door_light,
                         contentDescription = "Door light",
                         active = isActiveToggle(state.doorLight),
@@ -166,7 +156,7 @@ fun ClimateBarScreen(
                     )
 
                     QuickToggleChip(
-                        modifier = Modifier.width(135.dp),
+                        modifier = Modifier.width(124.dp),
                         iconRes = R.drawable.ic_climate_mirror_fold,
                         contentDescription = "Mirror auto fold",
                         active = isActiveToggle(state.mirrorAutoFold),
@@ -175,7 +165,7 @@ fun ClimateBarScreen(
                     )
 
                     QuickToggleChip(
-                        modifier = Modifier.width(135.dp),
+                        modifier = Modifier.width(124.dp),
                         iconRes = R.drawable.ic_climate_mirror_assist,
                         contentDescription = "Rear mirror assist",
                         active = isActiveToggle(state.mirrorRearAssist),
@@ -183,6 +173,16 @@ fun ClimateBarScreen(
                         onClick = state::onMirrorRearAssistClick,
                     )
                 }
+
+                ClimateIndicatorsCard(
+                    modifier = Modifier
+                        .padding(start = 20.dp)
+                        .width(294.dp),
+                    cabinTemp = formatAmbientTemp(state.cabinTemp),
+                    airIconRes = fanDirectionIconRes(state.fanDirection),
+                    fanSpeed = state.fanSpeed,
+                    connected = state.isConnected,
+                )
             }
 
             Row(
@@ -270,60 +270,75 @@ private fun ClimateIndicatorsCard(
 ) {
     PanelCard(
         modifier = modifier,
-        minHeight = 40.dp,
-        horizontalPadding = 12.dp,
+        minHeight = 42.dp,
+        horizontalPadding = 16.dp,
         verticalPadding = 5.dp,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SmallTemperatureIndicator(
-                label = "",
-                value = cabinTemp,
-                connected = connected,
-            )
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                SmallTemperatureIndicator(
+                    label = "",
+                    value = cabinTemp,
+                    connected = connected,
+                )
+            }
 
             Box(
                 modifier = Modifier
-                    .size(width = 1.dp, height = 26.dp)
+                    .size(width = 1.dp, height = 28.dp)
                     .background(Color.White.copy(alpha = 0.12f)),
-            )
-
-            Icon(
-                painter = painterResource(id = airIconRes),
-                contentDescription = "Air flow direction",
-                modifier = Modifier.size(38.dp),
-                tint = if (connected) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.28f),
             )
 
             Box(
-                modifier = Modifier
-                    .size(width = 1.dp, height = 26.dp)
-                    .background(Color.White.copy(alpha = 0.12f)),
-            )
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_climate_fan),
-                    contentDescription = "Fan speed",
-                    modifier = Modifier.size(34.dp),
-                    tint = if (connected) Color.White.copy(alpha = 0.84f) else Color.White.copy(alpha = 0.28f),
+                    painter = painterResource(id = airIconRes),
+                    contentDescription = "Air flow direction",
+                    modifier = Modifier.size(46.dp),
+                    tint = if (connected) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.28f),
                 )
-                Text(
-                    text = formatFanSpeed(fanSpeed = fanSpeed, connected = connected),
-                    color = if (connected) Color.White else Color.White.copy(alpha = 0.34f),
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = if (connected && fanSpeed == 0) 16.sp else 24.sp,
-                    ),
-                    textAlign = TextAlign.Start,
-                    maxLines = 1,
-                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(width = 1.dp, height = 28.dp)
+                    .background(Color.White.copy(alpha = 0.12f)),
+            )
+
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_climate_fan),
+                        contentDescription = "Fan speed",
+                        modifier = Modifier.size(42.dp),
+                        tint = if (connected) Color.White.copy(alpha = 0.84f) else Color.White.copy(alpha = 0.28f),
+                    )
+                    Text(
+                        modifier = Modifier.width(60.dp),
+                        text = formatFanSpeed(fanSpeed = fanSpeed, connected = connected),
+                        color = if (connected) Color.White else Color.White.copy(alpha = 0.34f),
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = if (connected && fanSpeed == 0) 22.sp else 30.sp,
+                        ),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -336,7 +351,7 @@ private fun SmallTemperatureIndicator(
     connected: Boolean,
 ) {
     Row(
-        modifier = Modifier.width(64.dp),
+        modifier = Modifier.width(82.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -356,7 +371,7 @@ private fun SmallTemperatureIndicator(
             color = if (connected) Color.White else Color.White.copy(alpha = 0.32f),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
+                fontSize = 26.sp,
             ),
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -407,7 +422,7 @@ private fun SeatActionButton(
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(36.dp),
                 tint = when {
                     !connected -> Color.White.copy(alpha = 0.28f)
                     isActive -> accent
@@ -418,7 +433,7 @@ private fun SeatActionButton(
                 repeat(3) { index ->
                     Box(
                         modifier = Modifier
-                            .size(6.dp)
+                            .size(7.dp)
                             .clip(CircleShape)
                             .background(
                                 if (connected && index < level.coerceIn(0, 3)) {
@@ -463,20 +478,20 @@ private fun QuickToggleChip(
                 shape = RoundedCornerShape(12.dp),
             )
             .clickable(enabled = connected, onClick = onClick)
-            .defaultMinSize(minHeight = 38.dp),
+            .defaultMinSize(minHeight = 40.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp),
+                .padding(horizontal = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(36.dp),
                 tint = when {
                     !connected -> Color.White.copy(alpha = 0.28f)
                     active -> Color.White
@@ -539,7 +554,7 @@ private fun formatFanSpeed(
     connected: Boolean,
 ): String = when {
     !connected || fanSpeed < 0 -> "--"
-    fanSpeed == 0 -> "ВЫКЛ"
+    fanSpeed == 0 -> "OFF"
     else -> fanSpeed.toString()
 }
 
