@@ -41,7 +41,8 @@ import com.alexander.carplay.domain.model.ClimateSnapshot
 
 const val ClimateBarHeightDp = 54
 val ClimateBarHeight = ClimateBarHeightDp.dp
-private val ClimateControlHeight = 46.dp
+private val ClimateControlHeight = 42.dp
+private val ClimateControlCornerRadius = 14.dp
 
 @Composable
 fun rememberClimateBarState(enabled: Boolean): ClimateBarState {
@@ -178,7 +179,7 @@ fun ClimateBarScreen(
                 ClimateIndicatorsCard(
                     modifier = Modifier
                         .padding(start = 20.dp)
-                        .width(294.dp),
+                        .width(336.dp),
                     cabinTemp = formatAmbientTemp(state.cabinTemp),
                     airIconRes = fanDirectionIconRes(state.fanDirection),
                     fanSpeed = state.fanSpeed,
@@ -303,7 +304,7 @@ private fun ClimateIndicatorsCard(
                 Icon(
                     painter = painterResource(id = airIconRes),
                     contentDescription = "Air flow direction",
-                    modifier = Modifier.size(46.dp),
+                    modifier = Modifier.size(43.dp),
                     tint = if (connected) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.28f),
                 )
             }
@@ -320,16 +321,18 @@ private fun ClimateIndicatorsCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_climate_fan),
                         contentDescription = "Fan speed",
-                        modifier = Modifier.size(42.dp),
+                        modifier = Modifier.size(35.dp),
                         tint = if (connected) Color.White.copy(alpha = 0.84f) else Color.White.copy(alpha = 0.28f),
                     )
                     Text(
-                        modifier = Modifier.width(60.dp),
+                        modifier = Modifier.width(
+                            if (connected && fanSpeed == 0) 54.dp else 48.dp,
+                        ),
                         text = formatFanSpeed(fanSpeed = fanSpeed, connected = connected),
                         color = if (connected) Color.White else Color.White.copy(alpha = 0.34f),
                         style = MaterialTheme.typography.titleLarge.copy(
@@ -393,7 +396,7 @@ private fun SeatActionButton(
     val isActive = connected && level.coerceIn(0, 3) > 0
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(ClimateControlCornerRadius))
             .background(
                 if (isActive) {
                     accent.copy(alpha = 0.18f)
@@ -408,7 +411,7 @@ private fun SeatActionButton(
                     isActive -> accent.copy(alpha = 0.28f)
                     else -> Color.White.copy(alpha = 0.10f)
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(ClimateControlCornerRadius),
             )
             .clickable(enabled = connected, onClick = onClick)
             .height(ClimateControlHeight)
@@ -423,7 +426,7 @@ private fun SeatActionButton(
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(37.dp),
                 tint = when {
                     !connected -> Color.White.copy(alpha = 0.28f)
                     isActive -> accent
@@ -462,14 +465,14 @@ private fun QuickToggleChip(
     val iconSize = when (iconRes) {
         R.drawable.ic_climate_mirror_fold,
         R.drawable.ic_climate_mirror_assist,
-        -> 46.dp
+        -> 43.dp
 
-        else -> 42.dp
+        else -> 39.dp
     }
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(ClimateControlCornerRadius))
             .background(
                 if (active && connected) {
                     Color(0xFF8AD18F).copy(alpha = 0.17f)
@@ -484,7 +487,7 @@ private fun QuickToggleChip(
                     active -> Color(0xFF8AD18F).copy(alpha = 0.24f)
                     else -> Color.White.copy(alpha = 0.10f)
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(ClimateControlCornerRadius),
             )
             .clickable(enabled = connected, onClick = onClick)
             .height(ClimateControlHeight),
