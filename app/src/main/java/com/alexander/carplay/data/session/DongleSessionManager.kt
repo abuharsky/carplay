@@ -1720,7 +1720,15 @@ class DongleSessionManager(
                     logStore.error(SOURCE, "Read loop failed", t)
                     executors.session.execute {
                         if (currentSession === session) {
-                            closeCurrentSession("read loop failed", scheduleReconnect = true)
+                            if (sessionMode == SessionMode.USB && started && !shuttingDown) {
+                                logStore.info(
+                                    SOURCE,
+                                    "Restarting USB session immediately after read loop failure",
+                                )
+                                restartSessionNow("read loop failed")
+                            } else {
+                                closeCurrentSession("read loop failed", scheduleReconnect = true)
+                            }
                         }
                     }
                 } else if (!shuttingDown) {
