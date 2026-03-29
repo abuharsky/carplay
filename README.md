@@ -5,6 +5,16 @@
 
 Основная идея проекта: Android-устройство выступает как полноценный хост для USB-адаптера CarPlay, держит соединение в фоне, восстанавливает состояние после пробуждения автомобиля и дает отдельный UI для управления CarPlay и смежными автомобильными функциями.
 
+## Почему появился этот проект
+
+Исходная формулировка:
+
+> The basic Autolink.apk app works very poorly on my car head unit. It always disconnects and never reconnects again. This is the reason why I started this project. In my app, if any error happens, the app shows the last screen (losing the map view while using navigation is very annoying, so I save the last screen) and tries to reconnect as quickly as possible.
+
+Версия на русском:
+
+> Базовое приложение `Autolink.apk` очень плохо работает на моем головном устройстве в автомобиле. Оно постоянно отваливается и потом уже не переподключается. Именно поэтому я и начал этот проект. В моем приложении, если происходит любая ошибка, оно показывает последний экран дальше, а затем старается переподключиться как можно быстрее. Потеря карты во время навигации очень раздражает, поэтому я отдельно сохраняю последний экран.
+
 ## Что уже есть
 
 - `Foreground Service`, который держит USB-сессию, heartbeat, init sequence, reconnect, чтение и запись CPC200, видео, аудио и touch-события.
