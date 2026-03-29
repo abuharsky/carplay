@@ -34,6 +34,7 @@ import com.alexander.carplay.domain.usecase.SaveProjectionCarPlaySafeAreaBottomU
 import com.alexander.carplay.domain.usecase.SaveProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
 import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
+import com.alexander.carplay.domain.usecase.SetProjectionActivityVisibleUseCase
 import com.alexander.carplay.domain.usecase.SetProjectionVideoStreamEnabledUseCase
 import com.alexander.carplay.domain.usecase.StartReplaySessionUseCase
 import com.alexander.carplay.domain.usecase.StartProjectionServiceUseCase
@@ -86,6 +87,7 @@ class CarPlayViewModel(
     private val refreshProjectionRuntimeSettingsUseCase: RefreshProjectionRuntimeSettingsUseCase,
     private val previewProjectionRuntimeSettingsUseCase: PreviewProjectionRuntimeSettingsUseCase,
     private val setProjectionVideoStreamEnabledUseCase: SetProjectionVideoStreamEnabledUseCase,
+    private val setProjectionActivityVisibleUseCase: SetProjectionActivityVisibleUseCase,
     private val loadProjectionDeviceSettingsUseCase: LoadProjectionDeviceSettingsUseCase,
     private val saveProjectionDeviceSettingsUseCase: SaveProjectionDeviceSettingsUseCase,
     private val loadProjectionAdapterNameUseCase: LoadProjectionAdapterNameUseCase,
@@ -127,6 +129,10 @@ class CarPlayViewModel(
 
     fun onStart() {
         startProjectionServiceUseCase()
+    }
+
+    fun onActivityVisibilityChanged(visible: Boolean) {
+        setProjectionActivityVisibleUseCase(visible)
     }
 
     fun onBindUi() {

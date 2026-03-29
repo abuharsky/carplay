@@ -55,6 +55,7 @@ class CarPlayActivity : AppCompatActivity() {
         logStore.info(LOG_SOURCE, "onStart taskId=$taskId instance=${System.identityHashCode(this)}")
         hideSystemBars()
         viewModel.onStart()
+        viewModel.onActivityVisibilityChanged(true)
         viewModel.onBindUi()
     }
 
@@ -73,6 +74,7 @@ class CarPlayActivity : AppCompatActivity() {
             LOG_SOURCE,
             "onStop taskId=$taskId instance=${System.identityHashCode(this)} changingConfig=$isChangingConfigurations finishing=$isFinishing",
         )
+        viewModel.onActivityVisibilityChanged(false)
         viewModel.onUnbindUi()
     }
 

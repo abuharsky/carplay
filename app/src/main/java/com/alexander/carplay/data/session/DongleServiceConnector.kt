@@ -53,6 +53,7 @@ class DongleServiceConnector(
     private var bound = false
     private var pendingSurface: Surface? = null
     private var pendingVideoStreamEnabled: Boolean? = null
+    private var pendingActivityVisible: Boolean? = null
     private var pendingReconnect = false
     private var lastLoggedSnapshotSignature: String? = null
 
@@ -93,6 +94,10 @@ class DongleServiceConnector(
             pendingVideoStreamEnabled?.let { enabled ->
                 logStore.info(SOURCE, "Flushing pending video target=$enabled after bind")
                 binder?.setVideoStreamEnabled(enabled)
+            }
+            pendingActivityVisible?.let { visible ->
+                logStore.info(SOURCE, "Flushing pending activityVisible=$visible after bind")
+                binder?.setActivityVisible(visible)
             }
             if (pendingReconnect) {
                 logStore.info(SOURCE, "Flushing pending reconnect after bind")
@@ -188,6 +193,13 @@ class DongleServiceConnector(
         pendingVideoStreamEnabled = enabled
         logStore.info(SOURCE, "setVideoStreamEnabled enabled=$enabled binderReady=${binder != null}")
         binder?.setVideoStreamEnabled(enabled)
+    }
+
+    fun setActivityVisible(visible: Boolean) {
+        ensureServiceStarted()
+        pendingActivityVisible = visible
+        logStore.info(SOURCE, "setActivityVisible visible=$visible binderReady=${binder != null}")
+        binder?.setActivityVisible(visible)
     }
 
     fun selectDevice(deviceId: String) {

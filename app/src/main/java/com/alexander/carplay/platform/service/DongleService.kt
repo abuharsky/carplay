@@ -256,6 +256,10 @@ class DongleService : Service() {
             sessionManager.setVideoStreamEnabled(enabled)
         }
 
+        fun setActivityVisible(visible: Boolean) {
+            sessionManager.setActivityVisible(visible)
+        }
+
         fun selectDevice(deviceId: String) {
             sessionManager.selectDevice(deviceId)
         }

@@ -23,6 +23,7 @@ class CarPlayViewModelFactory(
             refreshProjectionRuntimeSettingsUseCase = appContainer.refreshProjectionRuntimeSettingsUseCase,
             previewProjectionRuntimeSettingsUseCase = appContainer.previewProjectionRuntimeSettingsUseCase,
             setProjectionVideoStreamEnabledUseCase = appContainer.setProjectionVideoStreamEnabledUseCase,
+            setProjectionActivityVisibleUseCase = appContainer.setProjectionActivityVisibleUseCase,
             loadProjectionDeviceSettingsUseCase = appContainer.loadProjectionDeviceSettingsUseCase,
             saveProjectionDeviceSettingsUseCase = appContainer.saveProjectionDeviceSettingsUseCase,
             loadProjectionAdapterNameUseCase = appContainer.loadProjectionAdapterNameUseCase,

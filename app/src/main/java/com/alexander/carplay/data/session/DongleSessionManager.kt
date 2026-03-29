@@ -93,6 +93,7 @@ class DongleSessionManager(
         private const val MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS = 120_000L
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val USB_POST_OPEN_STABILIZATION_DELAY_MS = 250L
+        private const val OPEN_ACK_TIMEOUT_MS = 6_000L
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
@@ -239,6 +240,7 @@ class DongleSessionManager(
     private var awaitingAutoConnectResult = false
     private var reconnectFuture: ScheduledFuture<*>? = null
     private var sleepDisconnectFuture: ScheduledFuture<*>? = null
+    private var openAckTimeoutFuture: ScheduledFuture<*>? = null
     private var connectAttemptWatchdogFuture: ScheduledFuture<*>? = null
     private var lastInboundActivityAtMs = 0L
     private var lastHeartbeatEchoAtMs = 0L
@@ -254,6 +256,7 @@ class DongleSessionManager(
     private var connectAttemptSeq = 0
     private var activeConnectAttempt: ConnectAttemptTrace? = null
     private var restoreActivityAfterSleep = false
+    private var activityVisible = false
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val events: SharedFlow<ProjectionUiEvent> = _events.asSharedFlow()
@@ -588,14 +591,7 @@ class DongleSessionManager(
             previousSnapshot.powerState != PowerConstant.POWER_WORKING &&
             snapshot.powerState == PowerConstant.POWER_WORKING
         ) {
-            if (shouldRestoreActivityAfterSleep()) {
-                logStore.info(
-                    SOURCE,
-                    "Skipping CarPlay activity restore on POWER_WORKING because UI is already active",
-                )
-            } else {
-                launchCarPlayActivityForWakeRestore()
-            }
+            launchCarPlayActivityForWakeRestore()
             restoreActivityAfterSleep = false
         }
 
@@ -638,7 +634,7 @@ class DongleSessionManager(
     }
 
     private fun shouldRestoreActivityAfterSleep(): Boolean {
-        return surfaceAttached || videoStreamEnabled
+        return activityVisible
     }
 
     private fun launchCarPlayActivityForWakeRestore() {
@@ -652,6 +648,17 @@ class DongleSessionManager(
             "Restoring CarPlay activity on POWER_WORKING (surface=$surfaceAttached videoTarget=$videoStreamEnabled state=${_state.value.state.name})",
         )
         appContext.startActivity(intent)
+    }
+
+    fun setActivityVisible(visible: Boolean) {
+        executors.session.execute {
+            if (activityVisible == visible) return@execute
+            activityVisible = visible
+            logStore.info(
+                SOURCE,
+                "Activity visibility changed: visible=$visible surface=$surfaceAttached videoTarget=$videoStreamEnabled state=${_state.value.state.name}",
+            )
+        }
     }
 
     private fun disconnectProjectionForVehicleSleeping(snapshot: AutomotivePowerSnapshot) {
@@ -840,10 +847,12 @@ class DongleSessionManager(
             currentConnectionLabel = session.description
             sessionConfig = buildSessionConfig()
             val includeBrandingAssets = brandingInitializedDeviceId != device.deviceId
+            lastOpenAckAtMs = 0L
             resetProjectionRuntime("fresh usb session")
 
             ensureWriteLoop()
             flowController.onSessionReady(sessionConfig, includeBrandingAssets)
+            armOpenAckTimeout(session)
             if (includeBrandingAssets) {
                 brandingInitializedDeviceId = device.deviceId
             }
@@ -1833,6 +1842,7 @@ class DongleSessionManager(
             }
 
             Cpc200Protocol.MessageType.OPEN -> {
+                cancelOpenAckTimeout()
                 val openAckAtMs = SystemClock.elapsedRealtime()
                 lastOpenAckAtMs = openAckAtMs
                 if (payload != null) {
@@ -2040,6 +2050,7 @@ class DongleSessionManager(
     ) {
         cancelReconnect()
         cancelSleepDisconnect()
+        cancelOpenAckTimeout()
         if (activeConnectAttempt != null) {
             completeConnectAttempt("aborted: session closed ($reason)")
         }
@@ -2224,6 +2235,35 @@ class DongleSessionManager(
     private fun cancelSleepDisconnect() {
         sleepDisconnectFuture?.cancel(false)
         sleepDisconnectFuture = null
+    }
+
+    private fun armOpenAckTimeout(session: DongleConnectionSession) {
+        cancelOpenAckTimeout()
+        openAckTimeoutFuture = executors.scheduler.schedule(
+            {
+                executors.session.execute {
+                    if (
+                        shuttingDown ||
+                        sessionMode != SessionMode.USB ||
+                        currentSession !== session
+                    ) {
+                        return@execute
+                    }
+                    logStore.info(
+                        SOURCE,
+                        "Open ACK timeout after ${OPEN_ACK_TIMEOUT_MS} ms; restarting USB session (${session.description})",
+                    )
+                    restartSessionNow("open ack timeout")
+                }
+            },
+            OPEN_ACK_TIMEOUT_MS,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun cancelOpenAckTimeout() {
+        openAckTimeoutFuture?.cancel(false)
+        openAckTimeoutFuture = null
     }
 
     private fun armManualVehicleGateBypass(reason: String) {

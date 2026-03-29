@@ -82,6 +82,12 @@ class SetProjectionVideoStreamEnabledUseCase(
     operator fun invoke(enabled: Boolean) = sessionPort.setVideoStreamEnabled(enabled)
 }
 
+class SetProjectionActivityVisibleUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke(visible: Boolean) = sessionPort.setActivityVisible(visible)
+}
+
 class SelectProjectionDeviceUseCase(
     private val sessionPort: ProjectionSessionPort,
 ) {
