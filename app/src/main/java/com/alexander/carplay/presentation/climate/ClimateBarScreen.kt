@@ -119,7 +119,7 @@ fun ClimateBarScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TemperatureDisplay(
-                    modifier = Modifier.width(96.dp),
+                    modifier = Modifier.width(110.dp),
                     value = formatSetpointTemp(state.driverTemp),
                     connected = state.isConnected,
                     textAlign = TextAlign.Start,
@@ -228,7 +228,7 @@ fun ClimateBarScreen(
 
                 TemperatureDisplay(
                     modifier = Modifier
-                        .width(96.dp)
+                        .width(110.dp)
                         .padding(start = 6.dp),
                     value = formatSetpointTemp(state.passengerTemp),
                     connected = state.isConnected,
