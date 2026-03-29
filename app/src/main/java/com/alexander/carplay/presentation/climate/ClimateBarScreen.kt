@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,7 +32,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +46,11 @@ const val ClimateBarHeightDp = 54
 val ClimateBarHeight = ClimateBarHeightDp.dp
 private val ClimateControlHeight = 42.dp
 private val ClimateControlCornerRadius = 14.dp
+
+private data class ClimateIconSpec(
+    val size: Dp,
+    val yOffset: Dp = 0.dp,
+)
 
 @Composable
 fun rememberClimateBarState(enabled: Boolean): ClimateBarState {
@@ -255,6 +263,8 @@ private fun TemperatureDisplay(
                 fontWeight = FontWeight.Bold,
                 fontSize = 36.sp,
                 letterSpacing = (-0.5).sp,
+                fontFeatureSettings = "tnum",
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
             ),
             textAlign = textAlign,
             maxLines = 1,
@@ -273,8 +283,10 @@ private fun ClimateIndicatorsCard(
     PanelCard(
         modifier = modifier,
         minHeight = ClimateControlHeight,
-        horizontalPadding = 16.dp,
+        horizontalPadding = 20.dp,
         verticalPadding = 0.dp,
+        backgroundColor = Color.White.copy(alpha = 0.045f),
+        borderColor = Color.White.copy(alpha = 0.065f),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -294,17 +306,20 @@ private fun ClimateIndicatorsCard(
             Box(
                 modifier = Modifier
                     .size(width = 1.dp, height = 28.dp)
-                    .background(Color.White.copy(alpha = 0.12f)),
+                    .background(Color.White.copy(alpha = 0.08f)),
             )
 
             Box(
                 modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.Center,
             ) {
+                val airflowIconSpec = airflowIconSpec(airIconRes)
                 Icon(
                     painter = painterResource(id = airIconRes),
                     contentDescription = "Air flow direction",
-                    modifier = Modifier.size(43.dp),
+                    modifier = Modifier
+                        .size(airflowIconSpec.size)
+                        .offset(y = airflowIconSpec.yOffset),
                     tint = if (connected) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.28f),
                 )
             }
@@ -312,7 +327,7 @@ private fun ClimateIndicatorsCard(
             Box(
                 modifier = Modifier
                     .size(width = 1.dp, height = 28.dp)
-                    .background(Color.White.copy(alpha = 0.12f)),
+                    .background(Color.White.copy(alpha = 0.08f)),
             )
 
             Box(
@@ -323,10 +338,13 @@ private fun ClimateIndicatorsCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    val fanIconSpec = fanIconSpec()
                     Icon(
                         painter = painterResource(id = R.drawable.ic_climate_fan),
                         contentDescription = "Fan speed",
-                        modifier = Modifier.size(35.dp),
+                        modifier = Modifier
+                            .size(fanIconSpec.size)
+                            .offset(y = fanIconSpec.yOffset),
                         tint = if (connected) Color.White.copy(alpha = 0.84f) else Color.White.copy(alpha = 0.28f),
                     )
                     Text(
@@ -338,6 +356,8 @@ private fun ClimateIndicatorsCard(
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold,
                             fontSize = if (connected && fanSpeed == 0) 22.sp else 30.sp,
+                            fontFeatureSettings = "tnum",
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
                         ),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
@@ -376,6 +396,8 @@ private fun SmallTemperatureIndicator(
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
                 fontSize = 26.sp,
+                fontFeatureSettings = "tnum",
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
             ),
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -394,23 +416,28 @@ private fun SeatActionButton(
     modifier: Modifier = Modifier,
 ) {
     val isActive = connected && level.coerceIn(0, 3) > 0
+    val backgroundColor = when {
+        !connected -> Color.White.copy(alpha = 0.025f)
+        isActive -> accent.copy(alpha = 0.18f)
+        else -> Color.White.copy(alpha = 0.045f)
+    }
+    val borderColor = when {
+        !connected -> Color.White.copy(alpha = 0.05f)
+        isActive -> accent.copy(alpha = 0.28f)
+        else -> Color.White.copy(alpha = 0.14f)
+    }
+    val iconTint = when {
+        !connected -> Color.White.copy(alpha = 0.22f)
+        isActive -> accent
+        else -> Color.White.copy(alpha = 0.70f)
+    }
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(ClimateControlCornerRadius))
-            .background(
-                if (isActive) {
-                    accent.copy(alpha = 0.18f)
-                } else {
-                    Color.White.copy(alpha = 0.05f)
-                },
-            )
+            .background(backgroundColor)
             .border(
                 width = 1.dp,
-                color = when {
-                    !connected -> Color.White.copy(alpha = 0.05f)
-                    isActive -> accent.copy(alpha = 0.28f)
-                    else -> Color.White.copy(alpha = 0.10f)
-                },
+                color = borderColor,
                 shape = RoundedCornerShape(ClimateControlCornerRadius),
             )
             .clickable(enabled = connected, onClick = onClick)
@@ -419,6 +446,7 @@ private fun SeatActionButton(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
+        val iconSpec = seatActionIconSpec(iconRes)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -426,12 +454,10 @@ private fun SeatActionButton(
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(37.dp),
-                tint = when {
-                    !connected -> Color.White.copy(alpha = 0.28f)
-                    isActive -> accent
-                    else -> Color.White.copy(alpha = 0.78f)
-                },
+                modifier = Modifier
+                    .size(iconSpec.size)
+                    .offset(y = iconSpec.yOffset),
+                tint = iconTint,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 repeat(3) { index ->
@@ -440,10 +466,10 @@ private fun SeatActionButton(
                             .size(10.dp)
                             .clip(CircleShape)
                             .background(
-                                if (connected && index < level.coerceIn(0, 3)) {
-                                    accent
-                                } else {
-                                    Color.White.copy(alpha = 0.18f)
+                                when {
+                                    connected && index < level.coerceIn(0, 3) -> accent
+                                    connected -> Color.White.copy(alpha = 0.24f)
+                                    else -> Color.White.copy(alpha = 0.10f)
                                 },
                             ),
                     )
@@ -462,31 +488,30 @@ private fun QuickToggleChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val iconSize = when (iconRes) {
-        R.drawable.ic_climate_mirror_fold,
-        R.drawable.ic_climate_mirror_assist,
-        -> 43.dp
-
-        else -> 39.dp
+    val iconSpec = quickToggleIconSpec(iconRes)
+    val backgroundColor = when {
+        !connected -> Color.White.copy(alpha = 0.025f)
+        active -> Color(0xFF8AD18F).copy(alpha = 0.17f)
+        else -> Color.White.copy(alpha = 0.045f)
+    }
+    val borderColor = when {
+        !connected -> Color.White.copy(alpha = 0.05f)
+        active -> Color(0xFF8AD18F).copy(alpha = 0.24f)
+        else -> Color.White.copy(alpha = 0.14f)
+    }
+    val iconTint = when {
+        !connected -> Color.White.copy(alpha = 0.22f)
+        active -> Color.White
+        else -> Color.White.copy(alpha = 0.70f)
     }
 
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(ClimateControlCornerRadius))
-            .background(
-                if (active && connected) {
-                    Color(0xFF8AD18F).copy(alpha = 0.17f)
-                } else {
-                    Color.White.copy(alpha = 0.05f)
-                },
-            )
+            .background(backgroundColor)
             .border(
                 width = 1.dp,
-                color = when {
-                    !connected -> Color.White.copy(alpha = 0.05f)
-                    active -> Color(0xFF8AD18F).copy(alpha = 0.24f)
-                    else -> Color.White.copy(alpha = 0.10f)
-                },
+                color = borderColor,
                 shape = RoundedCornerShape(ClimateControlCornerRadius),
             )
             .clickable(enabled = connected, onClick = onClick)
@@ -503,12 +528,10 @@ private fun QuickToggleChip(
             Icon(
                 painter = painterResource(id = iconRes),
                 contentDescription = contentDescription,
-                modifier = Modifier.size(iconSize),
-                tint = when {
-                    !connected -> Color.White.copy(alpha = 0.28f)
-                    active -> Color.White
-                    else -> Color.White.copy(alpha = 0.78f)
-                },
+                modifier = Modifier
+                    .size(iconSpec.size)
+                    .offset(y = iconSpec.yOffset),
+                tint = iconTint,
             )
             Box(
                 modifier = Modifier
@@ -519,7 +542,7 @@ private fun QuickToggleChip(
                         when {
                             !connected -> Color.White.copy(alpha = 0.16f)
                             active -> Color(0xFF8AD18F)
-                            else -> Color.White.copy(alpha = 0.22f)
+                            else -> Color.White.copy(alpha = 0.30f)
                         },
                     ),
             )
@@ -533,13 +556,15 @@ private fun PanelCard(
     minHeight: androidx.compose.ui.unit.Dp = 36.dp,
     horizontalPadding: androidx.compose.ui.unit.Dp = 10.dp,
     verticalPadding: androidx.compose.ui.unit.Dp = 5.dp,
+    backgroundColor: Color = Color.White.copy(alpha = 0.06f),
+    borderColor: Color = Color.White.copy(alpha = 0.08f),
     content: @Composable RowScope.() -> Unit,
 ) {
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .background(backgroundColor)
+            .border(1.dp, borderColor, RoundedCornerShape(14.dp))
             .defaultMinSize(minHeight = minHeight)
             .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -560,6 +585,33 @@ private fun formatAmbientTemp(value: Float?): String = when {
     value == value.toInt().toFloat() -> "${value.toInt()}°"
     else -> "${"%.1f".format(value)}°"
 }
+
+private fun seatActionIconSpec(iconRes: Int): ClimateIconSpec = when (iconRes) {
+    R.drawable.ic_climate_heat -> ClimateIconSpec(size = 37.dp, yOffset = 0.5.dp)
+    R.drawable.ic_climate_cool -> ClimateIconSpec(size = 37.dp, yOffset = 0.5.dp)
+    else -> ClimateIconSpec(size = 37.dp, yOffset = 0.5.dp)
+}
+
+private fun quickToggleIconSpec(iconRes: Int): ClimateIconSpec = when (iconRes) {
+    R.drawable.ic_climate_mirror_fold,
+    R.drawable.ic_climate_mirror_assist,
+    -> ClimateIconSpec(size = 42.dp, yOffset = 0.5.dp)
+
+    else -> ClimateIconSpec(size = 39.dp, yOffset = 0.5.dp)
+}
+
+private fun airflowIconSpec(iconRes: Int): ClimateIconSpec = when (iconRes) {
+    R.drawable.ic_climate_air_defrost,
+    R.drawable.ic_climate_air_foot_defrost,
+    -> ClimateIconSpec(size = 42.dp, yOffset = 0.5.dp)
+
+    else -> ClimateIconSpec(size = 42.dp, yOffset = 0.5.dp)
+}
+
+private fun fanIconSpec(): ClimateIconSpec = ClimateIconSpec(
+    size = 35.dp,
+    yOffset = 0.5.dp,
+)
 
 private fun formatFanSpeed(
     fanSpeed: Int,

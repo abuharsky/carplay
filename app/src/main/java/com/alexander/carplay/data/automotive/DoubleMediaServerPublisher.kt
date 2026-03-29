@@ -52,7 +52,6 @@ class DoubleMediaServerPublisher(
     fun onMediaMetadata(metadata: JSONObject) {
         executor.execute {
             if (metadata.length() == 1 && metadata.has("MediaSongPlayTime")) {
-           //     publishCoverIfAvailable()
                 return@execute
             }
 

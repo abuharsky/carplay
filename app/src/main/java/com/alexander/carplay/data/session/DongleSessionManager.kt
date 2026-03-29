@@ -1,6 +1,7 @@
 package com.alexander.carplay.data.session
 
 import android.content.Context
+import android.content.Intent
 import android.hardware.usb.UsbDevice
 import android.content.ComponentCallbacks2
 import android.os.SystemClock
@@ -34,7 +35,9 @@ import com.alexander.carplay.domain.model.ProjectionProtocolPhase
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSettingsPort
+import com.alexander.carplay.presentation.ui.CarPlayActivity
 import com.alexander.carplay.presentation.ui.ProjectionFrameSnapshotStore
+import com.incall.serversdk.power.PowerConstant
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -58,11 +61,35 @@ class DongleSessionManager(
         REPLAY,
     }
 
+    private data class ConnectAttemptTrace(
+        val id: Int,
+        val reason: String,
+        val startedAtMs: Long,
+        val targetDeviceId: String?,
+        val sessionDescription: String?,
+        val stateAtStart: ProjectionConnectionState,
+        val phaseAtStart: ProjectionProtocolPhase,
+        var explicitTargetPreparedAtMs: Long? = null,
+        var autoConnectClearedAtMs: Long? = null,
+        var deviceFoundAtMs: Long? = null,
+        var bluetoothConnectStartAtMs: Long? = null,
+        var bluetoothConnectedAtMs: Long? = null,
+        var pluggedAtMs: Long? = null,
+        var wifiConnectedAtMs: Long? = null,
+        var phase7AtMs: Long? = null,
+        var phase8AtMs: Long? = null,
+        var firstVideoAtMs: Long? = null,
+        var phase13AtMs: Long? = null,
+        var phase0AtMs: Long? = null,
+        var unpluggedAtMs: Long? = null,
+    )
+
     companion object {
         private const val SOURCE = "Session"
         private const val READ_TIMEOUT_MS = 1_000
         private const val WRITE_TIMEOUT_MS = 1_000
         private const val RECONNECT_DELAY_MS = 2_000L
+        private const val SLEEP_DISCONNECT_GRACE_MS = 1_500L
         private const val MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS = 120_000L
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val USB_POST_OPEN_STABILIZATION_DELAY_MS = 250L
@@ -70,6 +97,11 @@ class DongleSessionManager(
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
         private const val INBOUND_ACTIVITY_LOG_GAP_MS = 10_000L
+        private const val POWER_REASON_SLEEPING = "sleeping"
+        private const val CONNECT_ATTEMPT_DUPLICATE_WINDOW_MS = 1_500L
+        private const val CONNECT_ATTEMPT_PRE_PLUGGED_STALL_LOG_MS = 8_000L
+        private const val CONNECT_ATTEMPT_POST_PLUGGED_STALL_LOG_MS = 8_000L
+        private const val CONNECT_ATTEMPT_POST_PHASE7_STALL_LOG_MS = 8_000L
     }
 
     private val appContext = context.applicationContext
@@ -206,14 +238,22 @@ class DongleSessionManager(
     private var bleAdvertisingActive = false
     private var awaitingAutoConnectResult = false
     private var reconnectFuture: ScheduledFuture<*>? = null
+    private var sleepDisconnectFuture: ScheduledFuture<*>? = null
+    private var connectAttemptWatchdogFuture: ScheduledFuture<*>? = null
     private var lastInboundActivityAtMs = 0L
     private var lastHeartbeatEchoAtMs = 0L
+    private var lastUsbConnectRequestedAtMs = 0L
+    private var lastUsbSessionOpenedAtMs = 0L
+    private var lastOpenAckAtMs = 0L
     private var writeLoopStarted = false
     private var videoStreamEnabled = false
     private var backgroundVideoDropLogged = false
     private var automotivePowerSnapshot = AutomotivePowerSnapshot()
     private var vehicleActive = true
     private var manualVehicleGateBypassUntilMs = 0L
+    private var connectAttemptSeq = 0
+    private var activeConnectAttempt: ConnectAttemptTrace? = null
+    private var restoreActivityAfterSleep = false
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val events: SharedFlow<ProjectionUiEvent> = _events.asSharedFlow()
@@ -520,6 +560,7 @@ class DongleSessionManager(
         snapshot: AutomotivePowerSnapshot,
         reason: String,
     ) {
+        val previousSnapshot = automotivePowerSnapshot
         val gateWasOpen = isVehicleGateOpen()
         val wasVehicleActive = vehicleActive
         automotivePowerSnapshot = snapshot
@@ -531,6 +572,35 @@ class DongleSessionManager(
 
         if (sessionMode != SessionMode.USB || shuttingDown) {
             return
+        }
+
+        if (reason == POWER_REASON_SLEEPING) {
+            restoreActivityAfterSleep = shouldRestoreActivityAfterSleep()
+            logStore.info(
+                SOURCE,
+                "Sleep restore snapshot captured: restoreActivity=$restoreActivityAfterSleep " +
+                    "surface=$surfaceAttached videoTarget=$videoStreamEnabled state=${_state.value.state.name}",
+            )
+        }
+
+        if (
+            restoreActivityAfterSleep &&
+            previousSnapshot.powerState != PowerConstant.POWER_WORKING &&
+            snapshot.powerState == PowerConstant.POWER_WORKING
+        ) {
+            if (shouldRestoreActivityAfterSleep()) {
+                logStore.info(
+                    SOURCE,
+                    "Skipping CarPlay activity restore on POWER_WORKING because UI is already active",
+                )
+            } else {
+                launchCarPlayActivityForWakeRestore()
+            }
+            restoreActivityAfterSleep = false
+        }
+
+        if (reason == POWER_REASON_SLEEPING && started && currentSession != null) {
+            disconnectProjectionForVehicleSleeping(snapshot)
         }
 
         if (gateIsOpen == gateWasOpen) {
@@ -565,6 +635,54 @@ class DongleSessionManager(
         if (currentSession == null) {
             connectOrRequestPermission("vehicle active: $reason")
         }
+    }
+
+    private fun shouldRestoreActivityAfterSleep(): Boolean {
+        return surfaceAttached || videoStreamEnabled
+    }
+
+    private fun launchCarPlayActivityForWakeRestore() {
+        val intent = Intent(appContext, CarPlayActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        logStore.info(
+            SOURCE,
+            "Restoring CarPlay activity on POWER_WORKING (surface=$surfaceAttached videoTarget=$videoStreamEnabled state=${_state.value.state.name})",
+        )
+        appContext.startActivity(intent)
+    }
+
+    private fun disconnectProjectionForVehicleSleeping(snapshot: AutomotivePowerSnapshot) {
+        if (sleepDisconnectFuture != null) return
+
+        cancelReconnect()
+        clearAutoConnectPending()
+        stopBleAdvertising()
+
+        logStore.info(
+            SOURCE,
+            "Vehicle sleeping detected; requesting CarPlay disconnect | ${AutomotivePowerPolicy.describeSnapshot(snapshot)}",
+        )
+        queueOutbound(Cpc200Protocol.disconnectPhone())
+
+        sleepDisconnectFuture = executors.scheduler.schedule(
+            {
+                executors.session.execute {
+                    sleepDisconnectFuture = null
+                    if (currentSession != null) {
+                        logStore.info(SOURCE, "Force closing CarPlay session after sleeping disconnect grace")
+                        closeCurrentSession("vehicle sleeping", scheduleReconnect = false)
+                    }
+                    if (!isVehicleGateOpen() && started) {
+                        updateWaitingForVehicleState("vehicle sleeping")
+                    }
+                }
+            },
+            SLEEP_DISCONNECT_GRACE_MS,
+            TimeUnit.MILLISECONDS,
+        )
     }
 
     private fun updateWaitingForVehicleState(reason: String) {
@@ -682,6 +800,7 @@ class DongleSessionManager(
         }
 
         openingUsbDeviceId = device.deviceId
+        lastUsbConnectRequestedAtMs = SystemClock.elapsedRealtime()
         updateState(
             state = ProjectionConnectionState.CONNECTING,
             message = "Opening USB connection ($reason)",
@@ -699,6 +818,17 @@ class DongleSessionManager(
             Thread.sleep(USB_OPEN_STABILIZATION_DELAY_MS)
 
             val session = usbTransport.open(device)
+            lastUsbSessionOpenedAtMs = SystemClock.elapsedRealtime()
+            val connectRequestLatencyMs = if (lastUsbConnectRequestedAtMs > 0L) {
+                lastUsbSessionOpenedAtMs - lastUsbConnectRequestedAtMs
+            } else {
+                -1L
+            }
+            logStore.info(
+                SOURCE,
+                "USB session opened: ${session.description} " +
+                    "(since connect request=${formatElapsedMs(connectRequestLatencyMs)})",
+            )
             if (USB_POST_OPEN_STABILIZATION_DELAY_MS > 0L) {
                 logStore.info(
                     SOURCE,
@@ -785,6 +915,7 @@ class DongleSessionManager(
             logStore.info(SOURCE, "Auto-connect suppressed while vehicle gate is closed: $reason")
             return
         }
+        beginConnectAttempt(reason)
         emitAutoConnectRequest()
         awaitingAutoConnectResult = true
         logStore.info(
@@ -796,6 +927,7 @@ class DongleSessionManager(
     private fun clearAutoConnectPending() {
         if (!awaitingAutoConnectResult) return
         awaitingAutoConnectResult = false
+        noteConnectAttemptAutoConnectCleared()
         logStore.info(SOURCE, "Auto-connect pending cleared")
     }
 
@@ -826,9 +958,306 @@ class DongleSessionManager(
             ?.ifBlank { null }
         if (selectedId != null) {
             queueOutbound(Cpc200Protocol.selectDevice(selectedId))
+            noteConnectAttemptExplicitTargetPrepared(selectedId)
             logStore.info(SOURCE, "Auto-connect target prepared: ${describeKnownDevice(selectedId)}")
         }
         queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.START_AUTO_CONNECT))
+    }
+
+    private fun beginConnectAttempt(reason: String) {
+        val now = SystemClock.elapsedRealtime()
+        val existingAttempt = activeConnectAttempt
+        if (existingAttempt != null) {
+            val stillEarlyDuplicate = now - existingAttempt.startedAtMs <= CONNECT_ATTEMPT_DUPLICATE_WINDOW_MS &&
+                existingAttempt.pluggedAtMs == null &&
+                existingAttempt.phase8AtMs == null &&
+                existingAttempt.phase13AtMs == null &&
+                existingAttempt.phase0AtMs == null &&
+                existingAttempt.unpluggedAtMs == null
+            if (stillEarlyDuplicate) {
+                logStore.info(
+                    SOURCE,
+                    "Connect attempt #${existingAttempt.id} retriggered before Plugged: $reason",
+                )
+                return
+            }
+            completeConnectAttempt("superseded before streaming", extra = "nextReason=$reason")
+        }
+
+        val attempt = ConnectAttemptTrace(
+            id = ++connectAttemptSeq,
+            reason = reason,
+            startedAtMs = now,
+            targetDeviceId = resolveSessionDeviceCandidateId(),
+            sessionDescription = currentSession?.description ?: currentConnectionLabel,
+            stateAtStart = _state.value.state,
+            phaseAtStart = _state.value.protocolPhase,
+        )
+        activeConnectAttempt = attempt
+        val sinceOpenAckMs = if (lastOpenAckAtMs > 0L) now - lastOpenAckAtMs else -1L
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} started: reason=$reason " +
+                "target=${describeKnownDevice(attempt.targetDeviceId)} " +
+                "phase=${attempt.phaseAtStart.name} state=${attempt.stateAtStart.name} " +
+                "sinceOpenAck=${formatElapsedMs(sinceOpenAckMs)} session=${attempt.sessionDescription ?: "-"}",
+        )
+        scheduleConnectAttemptWatchdog(
+            attemptId = attempt.id,
+            delayMs = CONNECT_ATTEMPT_PRE_PLUGGED_STALL_LOG_MS,
+            stage = "waiting for Plugged",
+        )
+    }
+
+    private fun noteConnectAttemptExplicitTargetPrepared(deviceId: String) {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.explicitTargetPreparedAtMs != null) return
+        attempt.explicitTargetPreparedAtMs = SystemClock.elapsedRealtime()
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} explicit target prepared at ${formatAttemptDelta(attempt, attempt.explicitTargetPreparedAtMs)}: " +
+                describeKnownDevice(deviceId),
+        )
+    }
+
+    private fun noteConnectAttemptAutoConnectCleared() {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.autoConnectClearedAtMs != null) return
+        attempt.autoConnectClearedAtMs = SystemClock.elapsedRealtime()
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} auto-connect cleared at ${formatAttemptDelta(attempt, attempt.autoConnectClearedAtMs)}",
+        )
+    }
+
+    private fun noteConnectAttemptDeviceFound() {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.deviceFoundAtMs != null) return
+        attempt.deviceFoundAtMs = SystemClock.elapsedRealtime()
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} deviceFound at ${formatAttemptDelta(attempt, attempt.deviceFoundAtMs)}",
+        )
+    }
+
+    private fun noteConnectAttemptBluetoothConnectStart(deviceId: String?) {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.bluetoothConnectStartAtMs != null) return
+        attempt.bluetoothConnectStartAtMs = SystemClock.elapsedRealtime()
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} bluetoothConnectStart at ${formatAttemptDelta(attempt, attempt.bluetoothConnectStartAtMs)} " +
+                "device=${describeKnownDevice(deviceId ?: attempt.targetDeviceId)}",
+        )
+    }
+
+    private fun noteConnectAttemptBluetoothConnected(deviceId: String?) {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.bluetoothConnectedAtMs != null) return
+        attempt.bluetoothConnectedAtMs = SystemClock.elapsedRealtime()
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} bluetoothConnected at ${formatAttemptDelta(attempt, attempt.bluetoothConnectedAtMs)} " +
+                "device=${describeKnownDevice(deviceId ?: attempt.targetDeviceId)}",
+        )
+    }
+
+    private fun noteConnectAttemptPlugged(pluggedInfo: Cpc200Protocol.PluggedInfo) {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.pluggedAtMs != null) return
+        attempt.pluggedAtMs = SystemClock.elapsedRealtime()
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} plugged at ${formatAttemptDelta(attempt, attempt.pluggedAtMs)} " +
+                "phoneType=${Cpc200Protocol.describePhoneType(pluggedInfo.phoneType)} wifi=${pluggedInfo.wifiState}",
+        )
+        scheduleConnectAttemptWatchdog(
+            attemptId = attempt.id,
+            delayMs = CONNECT_ATTEMPT_POST_PLUGGED_STALL_LOG_MS,
+            stage = "waiting for Phase 7/8 after Plugged",
+        )
+    }
+
+    private fun noteConnectAttemptWifiConnected() {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.wifiConnectedAtMs == null) {
+            attempt.wifiConnectedAtMs = SystemClock.elapsedRealtime()
+        }
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} wifiConnected at ${formatAttemptDelta(attempt, attempt.wifiConnectedAtMs)} " +
+                "phase=${_state.value.protocolPhase.name} state=${_state.value.state.name}",
+        )
+    }
+
+    private fun noteConnectAttemptPhase(phase: Int) {
+        val attempt = activeConnectAttempt ?: return
+        val now = SystemClock.elapsedRealtime()
+        when (phase) {
+            7 -> {
+                if (attempt.phase7AtMs == null) {
+                    attempt.phase7AtMs = now
+                    logStore.info(
+                        SOURCE,
+                        "Connect attempt #${attempt.id} phase7 at ${formatAttemptDelta(attempt, attempt.phase7AtMs)}",
+                    )
+                }
+                scheduleConnectAttemptWatchdog(
+                    attemptId = attempt.id,
+                    delayMs = CONNECT_ATTEMPT_POST_PHASE7_STALL_LOG_MS,
+                    stage = "waiting for Phase 8 after Phase 7",
+                )
+            }
+
+            8 -> {
+                if (attempt.phase8AtMs == null) {
+                    attempt.phase8AtMs = now
+                }
+                completeConnectAttempt("streaming active", terminalAtMs = now)
+            }
+
+            13 -> {
+                if (attempt.phase13AtMs == null) {
+                    attempt.phase13AtMs = now
+                }
+                completeConnectAttempt("negotiation failed (phase 13)", terminalAtMs = now)
+            }
+
+            0 -> {
+                if (attempt.phase0AtMs == null) {
+                    attempt.phase0AtMs = now
+                }
+                completeConnectAttempt("session ended (phase 0)", terminalAtMs = now)
+            }
+        }
+    }
+
+    private fun noteConnectAttemptFirstVideo(width: Int, height: Int) {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.firstVideoAtMs != null) return
+        val now = SystemClock.elapsedRealtime()
+        attempt.firstVideoAtMs = now
+        if (attempt.phase8AtMs == null) {
+            completeConnectAttempt(
+                "first video before phase 8",
+                terminalAtMs = now,
+                extra = "video=${width}x${height}",
+            )
+        }
+    }
+
+    private fun noteConnectAttemptUnplugged() {
+        val attempt = activeConnectAttempt ?: return
+        if (attempt.unpluggedAtMs == null) {
+            attempt.unpluggedAtMs = SystemClock.elapsedRealtime()
+        }
+        val unpluggedAtMs = attempt.unpluggedAtMs ?: SystemClock.elapsedRealtime()
+        completeConnectAttempt("unplugged before streaming", terminalAtMs = unpluggedAtMs)
+    }
+
+    private fun scheduleConnectAttemptWatchdog(
+        attemptId: Int,
+        delayMs: Long,
+        stage: String,
+    ) {
+        connectAttemptWatchdogFuture?.cancel(false)
+        connectAttemptWatchdogFuture = executors.scheduler.schedule(
+            {
+                executors.session.execute {
+                    val attempt = activeConnectAttempt ?: return@execute
+                    if (attempt.id != attemptId) return@execute
+                    val stalled = when (stage) {
+                        "waiting for Plugged" -> {
+                            attempt.pluggedAtMs == null &&
+                                attempt.phase8AtMs == null &&
+                                attempt.phase13AtMs == null &&
+                                attempt.phase0AtMs == null &&
+                                attempt.unpluggedAtMs == null
+                        }
+
+                        "waiting for Phase 7/8 after Plugged" -> {
+                            attempt.pluggedAtMs != null &&
+                                attempt.phase7AtMs == null &&
+                                attempt.phase8AtMs == null &&
+                                attempt.phase13AtMs == null &&
+                                attempt.phase0AtMs == null &&
+                                attempt.unpluggedAtMs == null
+                        }
+
+                        "waiting for Phase 8 after Phase 7" -> {
+                            attempt.phase7AtMs != null &&
+                                attempt.phase8AtMs == null &&
+                                attempt.phase13AtMs == null &&
+                                attempt.phase0AtMs == null &&
+                                attempt.unpluggedAtMs == null
+                        }
+
+                        else -> false
+                    }
+                    if (!stalled) return@execute
+                    logStore.info(
+                        SOURCE,
+                        "Connect attempt #${attempt.id} stall detected: $stage | " +
+                            "${buildConnectAttemptSummary(attempt, terminalAtMs = SystemClock.elapsedRealtime())} " +
+                            "phase=${_state.value.protocolPhase.name} state=${_state.value.state.name}",
+                    )
+                }
+            },
+            delayMs,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun completeConnectAttempt(
+        outcome: String,
+        terminalAtMs: Long = SystemClock.elapsedRealtime(),
+        extra: String? = null,
+    ) {
+        val attempt = activeConnectAttempt ?: return
+        connectAttemptWatchdogFuture?.cancel(false)
+        connectAttemptWatchdogFuture = null
+        val suffix = extra?.let { " $it" } ?: ""
+        logStore.info(
+            SOURCE,
+            "Connect attempt #${attempt.id} $outcome | ${buildConnectAttemptSummary(attempt, terminalAtMs)}$suffix",
+        )
+        activeConnectAttempt = null
+    }
+
+    private fun buildConnectAttemptSummary(
+        attempt: ConnectAttemptTrace,
+        terminalAtMs: Long,
+    ): String {
+        return buildString {
+            append("reason=").append(attempt.reason)
+            append(" target=").append(describeKnownDevice(attempt.targetDeviceId))
+            append(" explicitTarget=").append(attempt.explicitTargetPreparedAtMs != null)
+            append(" session=").append(attempt.sessionDescription ?: "-")
+            append(" total=").append(formatElapsedMs(terminalAtMs - attempt.startedAtMs))
+            append(" cleared=").append(formatAttemptDelta(attempt, attempt.autoConnectClearedAtMs))
+            append(" deviceFound=").append(formatAttemptDelta(attempt, attempt.deviceFoundAtMs))
+            append(" btStart=").append(formatAttemptDelta(attempt, attempt.bluetoothConnectStartAtMs))
+            append(" btConnected=").append(formatAttemptDelta(attempt, attempt.bluetoothConnectedAtMs))
+            append(" plugged=").append(formatAttemptDelta(attempt, attempt.pluggedAtMs))
+            append(" wifiConnected=").append(formatAttemptDelta(attempt, attempt.wifiConnectedAtMs))
+            append(" phase7=").append(formatAttemptDelta(attempt, attempt.phase7AtMs))
+            append(" phase8=").append(formatAttemptDelta(attempt, attempt.phase8AtMs))
+            append(" firstVideo=").append(formatAttemptDelta(attempt, attempt.firstVideoAtMs))
+            append(" phase13=").append(formatAttemptDelta(attempt, attempt.phase13AtMs))
+            append(" phase0=").append(formatAttemptDelta(attempt, attempt.phase0AtMs))
+            append(" unplugged=").append(formatAttemptDelta(attempt, attempt.unpluggedAtMs))
+        }
+    }
+
+    private fun formatAttemptDelta(
+        attempt: ConnectAttemptTrace,
+        timestampMs: Long?,
+    ): String {
+        return timestampMs?.let { formatElapsedMs(it - attempt.startedAtMs) } ?: "-"
+    }
+
+    private fun formatElapsedMs(durationMs: Long): String {
+        return if (durationMs >= 0L) "${durationMs}ms" else "-"
     }
 
     private fun resetProjectionRuntime(reason: String) {
@@ -1366,6 +1795,7 @@ class DongleSessionManager(
             pendingConnectionDeviceId = null
             pendingDeviceSelectionSent = false
         }
+        noteConnectAttemptFirstVideo(safeMeta.width, safeMeta.height)
         flowController.onVideoFrameReceived(safeMeta.width, safeMeta.height)
 
         updateState(
@@ -1395,11 +1825,24 @@ class DongleSessionManager(
             }
 
             Cpc200Protocol.MessageType.OPEN -> {
+                val openAckAtMs = SystemClock.elapsedRealtime()
+                lastOpenAckAtMs = openAckAtMs
                 if (payload != null) {
                     val openedInfo = Cpc200Protocol.parseOpen(payload)
+                    val sinceUsbRequestMs = if (lastUsbConnectRequestedAtMs > 0L) {
+                        openAckAtMs - lastUsbConnectRequestedAtMs
+                    } else {
+                        -1L
+                    }
+                    val sinceUsbOpenMs = if (lastUsbSessionOpenedAtMs > 0L) {
+                        openAckAtMs - lastUsbSessionOpenedAtMs
+                    } else {
+                        -1L
+                    }
                     logStore.info(
                         SOURCE,
-                        "Open acknowledged by adapter: ${openedInfo.width}x${openedInfo.height}@${openedInfo.fps}",
+                        "Open acknowledged by adapter: ${openedInfo.width}x${openedInfo.height}@${openedInfo.fps} " +
+                            "(since connect request=${formatElapsedMs(sinceUsbRequestMs)}, since usb open=${formatElapsedMs(sinceUsbOpenMs)})",
                     )
                     renderer.updateVideoFormat(openedInfo.width, openedInfo.height, openedInfo.fps)
                     if (sessionMode == SessionMode.REPLAY && openedInfo.fps > 0) {
@@ -1423,6 +1866,7 @@ class DongleSessionManager(
                 currentPhoneType = pluggedInfo.phoneType
                 rememberSessionDevice(resolveSessionDeviceCandidateId(), "plugged")
                 sessionConfig = buildSessionConfig()
+                noteConnectAttemptPlugged(pluggedInfo)
                 logStore.info(
                     SOURCE,
                     "Phone plugged: ${Cpc200Protocol.describePhoneType(pluggedInfo.phoneType)}, wifi=${pluggedInfo.wifiState}",
@@ -1440,6 +1884,7 @@ class DongleSessionManager(
                     currentSessionDeviceId = null
                     currentPeerBluetoothDeviceId = null
                 }
+                noteConnectAttemptPhase(phase)
                 logStore.info(SOURCE, "Phase message: $phase")
                 flowController.onPhase(phase)
                 if (phase == 8) {
@@ -1451,6 +1896,7 @@ class DongleSessionManager(
                 currentPhoneType = null
                 currentSessionDeviceId = null
                 currentPeerBluetoothDeviceId = null
+                noteConnectAttemptUnplugged()
                 logStore.info(SOURCE, "Phone unplugged")
                 flowController.onUnplugged()
             }
@@ -1478,6 +1924,12 @@ class DongleSessionManager(
                         logStore.info(SOURCE, "Phone Bluetooth MAC: $phoneBtMac")
                     }
                 }
+                if (command == Cpc200Protocol.Command.DEVICE_FOUND) {
+                    noteConnectAttemptDeviceFound()
+                }
+                if (command == Cpc200Protocol.Command.WIFI_CONNECTED) {
+                    noteConnectAttemptWifiConnected()
+                }
                 flowController.onCommand(command)
             }
 
@@ -1496,6 +1948,7 @@ class DongleSessionManager(
             Cpc200Protocol.MessageType.BLUETOOTH_CONNECT_START -> {
                 val safePayload = payload ?: return
                 currentPeerBluetoothDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
+                noteConnectAttemptBluetoothConnectStart(currentPeerBluetoothDeviceId)
                 logStore.info(SOURCE, "BluetoothConnectStart: ${describeKnownDevice(currentPeerBluetoothDeviceId)}")
                 refreshState(phoneDescription = describeKnownDevice(currentPeerBluetoothDeviceId))
             }
@@ -1503,6 +1956,7 @@ class DongleSessionManager(
             Cpc200Protocol.MessageType.BLUETOOTH_CONNECTED -> {
                 val safePayload = payload ?: return
                 currentPeerBluetoothDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
+                noteConnectAttemptBluetoothConnected(currentPeerBluetoothDeviceId)
                 logStore.info(SOURCE, "BluetoothConnected: ${describeKnownDevice(currentPeerBluetoothDeviceId)}")
                 refreshState(phoneDescription = describeKnownDevice(currentPeerBluetoothDeviceId))
             }
@@ -1577,6 +2031,10 @@ class DongleSessionManager(
         scheduleReconnect: Boolean,
     ) {
         cancelReconnect()
+        cancelSleepDisconnect()
+        if (activeConnectAttempt != null) {
+            completeConnectAttempt("aborted: session closed ($reason)")
+        }
         flowController.onSessionClosed(reason)
         stopHeartbeatLoop()
         stopFrameRequestLoop()
@@ -1753,6 +2211,11 @@ class DongleSessionManager(
     private fun cancelReconnect() {
         reconnectFuture?.cancel(false)
         reconnectFuture = null
+    }
+
+    private fun cancelSleepDisconnect() {
+        sleepDisconnectFuture?.cancel(false)
+        sleepDisconnectFuture = null
     }
 
     private fun armManualVehicleGateBypass(reason: String) {
