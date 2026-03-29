@@ -1,116 +1,206 @@
-# CarPlay Diagnostic Android Client
+# CarPlay Host Для Android / Changan
 
-Android-приложение на Kotlin для работы с USB-адаптером `CARLINKIT CPC200-CCPA` в режиме диагностического хоста.
+Этот репозиторий больше не является старым «нативным экспериментом» или просто диагностическим клиентом.  
+Проект переведен на новую Kotlin/Compose-реализацию с постоянным фоновым сервисом, нормальной сервисной сессией, экраном CarPlay, климат-панелью и автомобильными интеграциями.
 
-## Что уже сделано
+Основная идея проекта: Android-устройство выступает как полноценный хост для USB-адаптера CarPlay, держит соединение в фоне, восстанавливает состояние после пробуждения автомобиля и дает отдельный UI для управления CarPlay и смежными автомобильными функциями.
 
-- `Foreground Service` держит USB-сессию, heartbeat, init sequence, reconnect и low-level обработку.
-- `Activity` работает как экран: fullscreen `SurfaceView`, overlay, connect/reconnect кнопка, replay-кнопка и живой лог.
-- Реализованы слои `presentation`, `domain`, `data`, `platform`, чтобы UI не владел USB/codec логикой.
-- Добавлены `MediaCodec` renderer, `PacketRingByteBuffer`, базовый `AudioStreamManager`, `TouchInputMapper`, протокол CPC200.
-- В проекте сразу заложена отладка через `adb logcat`.
-- Добавлен `replay mode` для входящих USB-дампов: можно гонять реальные capture-файлы через тот же сервис и тот же декодер.
+## Что уже есть
+
+- `Foreground Service`, который держит USB-сессию, heartbeat, init sequence, reconnect, чтение и запись CPC200, видео, аудио и touch-события.
+- Полноценный экран CarPlay на Compose c `TextureView`/видеорядом, overlay-элементами и экраном настроек.
+- Поддержка реальных автомобильных сценариев сна/пробуждения:
+  - реакция на `sleeping`;
+  - корректное завершение CarPlay при уходе машины в сон;
+  - восстановление `CarPlayActivity`, если до сна она была активна.
+- Поддержка нескольких профилей iPhone:
+  - каталог известных устройств;
+  - ручной выбор телефона;
+  - авто-коннект;
+  - сценарий, когда в машине одновременно известно несколько iPhone.
+- Расширенные аудио-настройки:
+  - отдельные профили для `Media`, `Navigation`, `Siri`, `Call`, `Alert`;
+  - выбор аудиомаршрута;
+  - выбор маршрута микрофона;
+  - `gain`, `loudness`, `bass boost`;
+  - полноценный `EQ` с пресетами и ручной настройкой полос.
+- Интеграция с `DoubleMedia`:
+  - публикация названия трека;
+  - публикация исполнителя/источника;
+  - публикация обложки.
+- Климат-панель внизу экрана:
+  - температуры водителя и пассажира;
+  - текущий режим обдува;
+  - скорость вентилятора;
+  - быстрые автомобильные действия;
+  - управление подогревом/вентиляцией сидений.
+- Автокомфорт сидений:
+  - отдельные настройки для водителя и пассажира;
+  - авто-подогрев;
+  - авто-вентиляция;
+  - постепенное снижение уровня;
+  - логика паузы/возобновления после выключения зажигания.
+- Работа без `android.car` runtime:
+  - приложение не падает на обычных Android-устройствах;
+  - климат-слой и автомобильные интеграции просто отключаются;
+  - климат-бар может работать в placeholder-режиме.
+
+## Для каких машин и сценариев
+
+Проект в первую очередь заточен под реальные сценарии использования в автомобилях Changan и уже адаптирован под их поведение питания, сна/пробуждения и внутренние сервисы мультимедийной системы.
+
+Если на конкретном автомобиле доступны дополнительные automotive API, проект может использовать:
+
+- климат-контроллер;
+- данные HVAC;
+- автоподогрев и автовентиляцию сидений;
+- внутренние сервисы зеркал и сопутствующих быстрых действий.
+
+Если этих API нет, CarPlay-хост продолжает работать сам по себе. То есть автомобильные расширения не обязательны для основной CarPlay-функциональности.
 
 ## Архитектура
 
-- `platform/service/DongleService`
-  Отдельный foreground service. Живет дольше activity и владеет сервисной сессией.
+### Сервисный слой
 
-- `data/session/DongleSessionManager`
-  Оркестратор подключения: USB или replay dump, heartbeat, init sequence, read/write loops, reconnect, Surface focus, audio/video/touch.
+- `app/src/main/java/com/alexander/carplay/platform/service/DongleService.kt`
+  Фоновый foreground service, который живет дольше activity и владеет жизненным циклом сессии.
 
-- `data/usb`
-  Поиск устройства, permission request, bulk transfer, chunked read/write.
+- `app/src/main/java/com/alexander/carplay/data/session/DongleSessionManager.kt`
+  Центральный оркестратор:
+  - USB attach/detach;
+  - permission flow;
+  - init sequence;
+  - heartbeat;
+  - reconnect;
+  - wake/sleep логика;
+  - запуск и восстановление UI;
+  - обработка фаз протокола;
+  - маршрутизация touch/audio/video.
 
-- `data/replay`
-  File-backed session для воспроизведения входящих CPC200 сообщений без железа.
+- `app/src/main/java/com/alexander/carplay/data/session/DongleFlowController.kt`
+  Управление фазами подключения CarPlay, выбором устройства и переходами состояний.
 
-- `data/protocol`
-  Заголовок CPC200, сериализация `Open`, `SendFile`, `BoxSettings`, `Command`, `HeartBeat`, `MultiTouch`.
+### Протокол и транспорт
 
-- `data/video`
-  `MediaCodec` + ring buffer для H.264.
+- `app/src/main/java/com/alexander/carplay/data/usb/`
+  Поиск USB-устройства, открытие `UsbDeviceConnection`, bulk transfer, чтение и запись CPC200 сообщений.
 
-- `presentation`
-  `CarPlayActivity` + `CarPlayViewModel`.
+- `app/src/main/java/com/alexander/carplay/data/protocol/Cpc200Protocol.kt`
+  Формирование `Open`, `SendFile`, `BoxSettings`, `Command`, heartbeat, touch-сообщений и других пакетов адаптера.
 
-## Состояние протокола
+- `app/src/main/java/com/alexander/carplay/data/protocol/ProjectionSessionConfig.kt`
+  Конфигурация сессии CarPlay:
+  - размеры viewport;
+  - интеграция с климат-баром;
+  - параметры инициализации адаптера.
 
-- Реализован обязательный `P0`-каркас:
-  - header magic + `typeCheck`
-  - bulk transfer chunking 16 KB
-  - align-to-16 sizing
-  - foreground service
-  - heartbeat
-  - init sequence
-  - surface attach/detach
-  - request/release video focus
-  - reconnect path
-  - overlay + logs
+### Видео, аудио, ввод
 
-- Частично заложен `P1`:
-  - per-stream audio manager
-  - frame request timer
-  - auto reconnect
+- `app/src/main/java/com/alexander/carplay/data/video/H264Renderer.kt`
+  Декодирование и вывод видеоряда CarPlay.
 
-- Пока не реализовано:
-  - полноценные settings UI
-  - last-frame screenshot UX
-  - microphone capture
-  - media metadata parsing UI
+- `app/src/main/java/com/alexander/carplay/data/audio/AudioStreamManager.kt`
+  Многопоточное аудио с отдельными настройками для разных типов потоков, `Equalizer`, `BassBoost`, `LoudnessEnhancer`.
+
+- `app/src/main/java/com/alexander/carplay/data/audio/MicrophoneInputManager.kt`
+  Захват и маршрутизация микрофонного аудио.
+
+- `app/src/main/java/com/alexander/carplay/data/input/TouchInputMapper.kt`
+  Преобразование Android-touch в координаты CarPlay.
+
+### UI
+
+- `app/src/main/java/com/alexander/carplay/presentation/ui/CarPlayActivity.kt`
+  Основной экран приложения.
+
+- `app/src/main/java/com/alexander/carplay/presentation/ui/CarPlayComposeScreen.kt`
+  Compose-экран CarPlay, overlay и панель настроек.
+
+- `app/src/main/java/com/alexander/carplay/presentation/climate/ClimateBarScreen.kt`
+  Нижняя климат-панель.
+
+## Климат и автомобильные функции
+
+Если в системе доступен `android.car`, приложение поднимает автомобильный слой и использует:
+
+- климатические свойства HVAC;
+- состояние сидений;
+- внутренние быстрые действия;
+- политику сна/пробуждения;
+- автокомфорт сидений.
+
+Если `android.car` недоступен, климат-контроллер не инициализируется, а приложение:
+
+- не падает;
+- запускается на обычных Android-устройствах;
+- показывает заглушки там, где нет реальных автомобильных данных.
+
+Это удобно и для обычной эксплуатации, и для отладки на телефоне или Samsung-устройстве в режиме тестового хоста.
+
+## Настройки устройства
+
+Настройки привязываются к `deviceId`, поэтому у разных iPhone могут быть разные профили.
+
+Сейчас сохраняются и применяются:
+
+- аудиомаршрут;
+- микрофонный маршрут;
+- выбранный аудиоплеер;
+- `gain` для каждого типа потока;
+- `loudness`;
+- `bass boost`;
+- `EQ` пресет и пользовательские полосы;
+- настройки автоподогрева и автовентиляции сидений.
+
+## Диагностика и отладка
+
+В проекте уже встроено расширенное логирование для расследования проблем с:
+
+- USB transport;
+- reconnect;
+- `read loop failed`;
+- фазами подключения;
+- Bluetooth / Plugged / Wi-Fi / streaming;
+- wake/sleep переходами;
+- восстановлением activity после пробуждения;
+- климатом и automotive power-сигналами.
+
+Также в репозитории лежат reference-материалы:
+
+- `docs_reference/`
+
+Они используются для анализа протокола, последовательности инициализации и поведения адаптера.
 
 ## Быстрый запуск
 
-```bash
-./gradlew installDebug
-adb shell am start -n com.alexander.carplay.debug/com.alexander.carplay.presentation.ui.CarPlayActivity
-```
-
-## Replay дампа в эмуляторе
-
-Если есть capture-файл с входящими USB-сообщениями:
+Сборка debug APK:
 
 ```bash
-./scripts/replay-capture-emulator.sh /path/to/test-capture.bin
+./gradlew app:assembleDebug
 ```
 
-Что делает скрипт:
+Запуск activity вручную:
 
-1. устанавливает debug APK
-2. `adb push` дамп в `/data/local/tmp/test-capture.bin`
-3. открывает `CarPlayActivity` с extra `replay_capture_path=/data/local/tmp/test-capture.bin`
+```bash
+adb shell am start -n com.wt.airconditioner/com.alexander.carplay.presentation.ui.CarPlayActivity
+```
 
-Путь `/data/local/tmp` выбран специально для эмуляторов Android Automotive, чтобы не упираться в multi-user особенности `/sdcard/Android/data/...`.
-
-Можно также запустить replay вручную кнопкой `Replay dump` внутри activity.
-
-## ADB-отладка
-
-Основной лог-тег:
+Основной лог:
 
 ```bash
 adb logcat -v time CarPlayDiag:D *:S
 ```
 
-Для анализа capture-файла локально:
+## Текущее состояние проекта
 
-```bash
-python3 ./scripts/analyze_capture.py /path/to/test-capture.bin
-```
+На текущий момент это уже не прототип «посмотреть логи адаптера», а рабочий CarPlay-host с собственной сервисной архитектурой, UI, аудио-трактом, диагностикой и автомобильными интеграциями.
 
-Полезный цикл работы:
+Если коротко, сейчас проект умеет:
 
-1. Подключить телефон к ADB.
-2. Подключить адаптер по USB-OTG.
-3. Установить/обновить debug APK.
-4. Запустить activity.
-5. Смотреть `CarPlayDiag` и вносить точечные правки.
-
-## Ключевые файлы
-
-- `app/src/main/java/com/alexander/carplay/data/session/DongleSessionManager.kt`
-- `app/src/main/java/com/alexander/carplay/platform/service/DongleService.kt`
-- `app/src/main/java/com/alexander/carplay/data/replay/CaptureReplaySession.kt`
-- `app/src/main/java/com/alexander/carplay/data/protocol/Cpc200Protocol.kt`
-- `app/src/main/java/com/alexander/carplay/data/video/H264Renderer.kt`
-- `app/src/main/java/com/alexander/carplay/presentation/ui/CarPlayActivity.kt`
+- стабильно держать CarPlay-сессию через фоновый сервис;
+- работать в реальных автомобильных сценариях Changan;
+- поднимать и восстанавливать UI;
+- обслуживать несколько iPhone;
+- управлять звуком и эквалайзером;
+- интегрироваться с климатом и сиденьями там, где это поддерживается;
+- отключать эти интеграции там, где их нет, не ломая основную CarPlay-функциональность.
