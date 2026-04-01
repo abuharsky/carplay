@@ -116,6 +116,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alexander.carplay.BuildConfig
 import com.alexander.carplay.R
 import com.alexander.carplay.domain.model.ProjectionAudioPlayerType
 import com.alexander.carplay.domain.model.ProjectionAudioRoute
@@ -454,6 +455,15 @@ fun CarPlayRoute(
             }
         }
 
+        if (BuildConfig.DEBUG) {
+            DebugSleepCycleButton(
+                onClick = viewModel::debugSimulateVehicleSleepCycle,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 12.dp, top = 12.dp)
+                    .zIndex(8f),
+            )
+        }
     }
 }
 
@@ -518,6 +528,39 @@ private fun SimulatedHeadUnitContainer(
             Box(modifier = Modifier.fillMaxSize()) {
                 content()
             }
+        }
+    }
+}
+
+@Composable
+private fun DebugSleepCycleButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xCC111A28),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = "DBG SLEEP",
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                text = "4-10s power cycle",
+                color = Color(0xFF8FB7FF),
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }

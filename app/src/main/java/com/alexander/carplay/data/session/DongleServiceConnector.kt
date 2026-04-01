@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class DongleServiceConnector(
@@ -35,6 +36,7 @@ class DongleServiceConnector(
         const val DEFAULT_REPLAY_CAPTURE_PATH =
             "/data/local/tmp/test-capture.bin"
         private const val SOURCE = "UiSession"
+        private const val SURFACE_DETACH_DEBOUNCE_MS = 400L
     }
 
     private val appContext = application.applicationContext
@@ -55,7 +57,9 @@ class DongleServiceConnector(
     private var pendingVideoStreamEnabled: Boolean? = null
     private var pendingActivityVisible: Boolean? = null
     private var pendingReconnect = false
+    private var pendingDebugVehicleSleepCycle = false
     private var lastLoggedSnapshotSignature: String? = null
+    private var detachDebounceJob: Job? = null
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val logs = logStore.logs
@@ -103,6 +107,11 @@ class DongleServiceConnector(
                 logStore.info(SOURCE, "Flushing pending reconnect after bind")
                 binder?.requestReconnect()
                 pendingReconnect = false
+            }
+            if (pendingDebugVehicleSleepCycle) {
+                logStore.info(SOURCE, "Flushing pending debug sleep cycle after bind")
+                binder?.debugSimulateVehicleSleepCycle()
+                pendingDebugVehicleSleepCycle = false
             }
         }
 
@@ -178,6 +187,16 @@ class DongleServiceConnector(
         binder?.requestReconnect()
     }
 
+    fun debugSimulateVehicleSleepCycle() {
+        ensureServiceStarted()
+        val binderReady = binder != null
+        logStore.info(SOURCE, "debugSimulateVehicleSleepCycle binderReady=$binderReady")
+        if (!binderReady) {
+            pendingDebugVehicleSleepCycle = true
+        }
+        binder?.debugSimulateVehicleSleepCycle()
+    }
+
     fun refreshRuntimeSettings() {
         ensureServiceStarted()
         binder?.refreshRuntimeSettings()
@@ -214,15 +233,24 @@ class DongleServiceConnector(
 
     fun attachSurface(surface: Surface) {
         ensureServiceStarted()
+        // Cancel any pending debounced detach — rapid detach→attach causes codec error 0x80001005
+        detachDebounceJob?.cancel()
+        detachDebounceJob = null
         pendingSurface = surface
-        logStore.info(SOURCE, "attachSurface binderReady=${binder != null}")
+        logStore.info(SOURCE, "attachSurface (debounce cancelled) binderReady=${binder != null}")
         binder?.attachSurface(surface)
     }
 
     fun detachSurface() {
-        logStore.info(SOURCE, "detachSurface binderReady=${binder != null}")
-        binder?.detachSurface()
         pendingSurface = null
+        detachDebounceJob?.cancel()
+        detachDebounceJob = scope.launch {
+            delay(SURFACE_DETACH_DEBOUNCE_MS)
+            logStore.info(SOURCE, "detachSurface (debounced) binderReady=${binder != null}")
+            binder?.detachSurface()
+            detachDebounceJob = null
+        }
+        logStore.info(SOURCE, "detachSurface deferred ${SURFACE_DETACH_DEBOUNCE_MS}ms binderReady=${binder != null}")
     }
 
     fun sendMotionEvent(

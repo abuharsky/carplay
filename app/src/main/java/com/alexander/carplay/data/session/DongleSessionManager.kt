@@ -7,6 +7,7 @@ import android.content.ComponentCallbacks2
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.Surface
+import com.alexander.carplay.BuildConfig
 import com.alexander.carplay.data.automotive.AutomotivePowerMonitor
 import com.alexander.carplay.data.automotive.AutomotivePowerPolicy
 import com.alexander.carplay.data.automotive.AutomotivePowerSnapshot
@@ -22,6 +23,14 @@ import com.alexander.carplay.data.protocol.DongleDeviceCatalogParser
 import com.alexander.carplay.data.protocol.DongleKnownDevice
 import com.alexander.carplay.data.protocol.ProjectionSessionConfig
 import com.alexander.carplay.data.replay.CaptureReplaySession
+import com.alexander.carplay.data.session.v2.ConnectionEngineV2
+import com.alexander.carplay.data.session.v2.ConnectionEffectV2
+import com.alexander.carplay.data.session.v2.ConnectionEventV2
+import com.alexander.carplay.data.session.v2.ConnectionSnapshotV2
+import com.alexander.carplay.data.session.v2.DiscoveryStateV2
+import com.alexander.carplay.data.session.v2.ProjectionStateV2
+import com.alexander.carplay.data.session.v2.SelectionModeV2
+import com.alexander.carplay.data.session.v2.TransportStateV2
 import com.alexander.carplay.domain.model.ProjectionAudioRoute
 import com.alexander.carplay.data.usb.AndroidUsbTransport
 import com.alexander.carplay.data.usb.DongleConnectionSession
@@ -50,6 +59,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlin.random.Random
 
 class DongleSessionManager(
     context: Context,
@@ -94,6 +104,10 @@ class DongleSessionManager(
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val USB_POST_OPEN_STABILIZATION_DELAY_MS = 250L
         private const val OPEN_ACK_TIMEOUT_MS = 6_000L
+        private const val OPEN_ACK_RECOVERY_DELAY_INITIAL_MS = 1_500L
+        private const val OPEN_ACK_RECOVERY_DELAY_REPEATED_MS = 3_000L
+        private const val OPEN_ACK_MAX_CONSECUTIVE_TIMEOUTS = 8
+        private const val OPEN_ACK_TIMEOUT_REASON = "open ack timeout"
         private const val HEARTBEAT_INTERVAL_SECONDS = 2L
         private const val FRAME_REQUEST_INTERVAL_MS = 5_000L
         private const val DEFAULT_REPLAY_FRAME_DELAY_MS = 16L
@@ -102,7 +116,10 @@ class DongleSessionManager(
         private const val CONNECT_ATTEMPT_DUPLICATE_WINDOW_MS = 1_500L
         private const val CONNECT_ATTEMPT_PRE_PLUGGED_STALL_LOG_MS = 8_000L
         private const val CONNECT_ATTEMPT_POST_PLUGGED_STALL_LOG_MS = 8_000L
+        private const val CONNECT_ATTEMPT_POST_PLUGGED_STALL_RECONNECT_MS = 20_000L
         private const val CONNECT_ATTEMPT_POST_PHASE7_STALL_LOG_MS = 8_000L
+        private const val DEBUG_SLEEP_RESTORE_MIN_MS = 4_000L
+        private const val DEBUG_SLEEP_RESTORE_MAX_MS = 10_000L
     }
 
     private val appContext = context.applicationContext
@@ -125,89 +142,7 @@ class DongleSessionManager(
     private val availableDeviceIds = linkedSetOf<String>()
     private val _state = MutableStateFlow(ProjectionSessionSnapshot())
     private val _events = MutableSharedFlow<ProjectionUiEvent>(extraBufferCapacity = 8)
-    private val flowController = DongleFlowController(
-        logStore = logStore,
-        delegate = object : DongleFlowController.Delegate {
-            override fun queueMessage(message: ByteArray) {
-                queueOutbound(message)
-            }
-
-            override fun startReadLoop() {
-                currentSession?.let(::startReadLoop)
-            }
-
-            override fun sendCommand(commandId: Int) {
-                queueOutbound(Cpc200Protocol.command(commandId))
-            }
-
-            override fun startHeartbeat() {
-                startHeartbeatLoop()
-            }
-
-            override fun stopHeartbeat() {
-                stopHeartbeatLoop()
-            }
-
-            override fun startFrameRequests() {
-                startFrameRequestLoop()
-            }
-
-            override fun stopFrameRequests() {
-                stopFrameRequestLoop()
-            }
-
-            override fun requestAutoConnect(reason: String) {
-                this@DongleSessionManager.requestAutoConnect(reason)
-            }
-
-            override fun clearAutoConnectPending() {
-                this@DongleSessionManager.clearAutoConnectPending()
-            }
-
-            override fun startBleAdvertising(reason: String) {
-                this@DongleSessionManager.startBleAdvertising(reason)
-            }
-
-            override fun stopBleAdvertising() {
-                this@DongleSessionManager.stopBleAdvertising()
-            }
-
-            override fun hasKnownDevices(): Boolean = knownDevices.isNotEmpty()
-
-            override fun shouldAutoConnectKnownDevices(): Boolean =
-                this@DongleSessionManager.shouldAutoConnectKnownDevices()
-
-            override fun requiresManualDeviceSelection(): Boolean =
-                this@DongleSessionManager.requiresManualDeviceSelection()
-
-            override fun prepareForDongleReinit(reason: String) {
-                resetProjectionRuntime(reason)
-            }
-
-            override fun requestReconnect(reason: String) {
-                restartSessionNow(reason)
-            }
-
-            override fun requestHostUi() {
-                _events.tryEmit(ProjectionUiEvent.OpenSettings)
-            }
-
-            override fun updateState(
-                state: ProjectionConnectionState,
-                protocolPhase: ProjectionProtocolPhase,
-                message: String,
-                phoneDescription: String?,
-            ) {
-                this@DongleSessionManager.updateState(
-                    state = state,
-                    protocolPhase = protocolPhase,
-                    message = message,
-                    phoneDescription = phoneDescription,
-                    surfaceAttached = surfaceAttached,
-                )
-            }
-        },
-    )
+    private val connectionEngineV2 = ConnectionEngineV2(logStore::info)
 
     private var started = false
     private var shuttingDown = false
@@ -240,8 +175,11 @@ class DongleSessionManager(
     private var awaitingAutoConnectResult = false
     private var reconnectFuture: ScheduledFuture<*>? = null
     private var sleepDisconnectFuture: ScheduledFuture<*>? = null
+    private var debugVehicleWakeFuture: ScheduledFuture<*>? = null
     private var openAckTimeoutFuture: ScheduledFuture<*>? = null
+    private var openAckRecoveryFuture: ScheduledFuture<*>? = null
     private var connectAttemptWatchdogFuture: ScheduledFuture<*>? = null
+    private var postPluggedReconnectFuture: ScheduledFuture<*>? = null
     private var lastInboundActivityAtMs = 0L
     private var lastHeartbeatEchoAtMs = 0L
     private var lastUsbConnectRequestedAtMs = 0L
@@ -252,7 +190,9 @@ class DongleSessionManager(
     private var backgroundVideoDropLogged = false
     private var automotivePowerSnapshot = AutomotivePowerSnapshot()
     private var vehicleActive = true
+    private var transportEpochV2 = 0L
     private var manualVehicleGateBypassUntilMs = 0L
+    private var consecutiveOpenAckTimeouts = 0
     private var connectAttemptSeq = 0
     private var activeConnectAttempt: ConnectAttemptTrace? = null
     private var restoreActivityAfterSleep = false
@@ -265,6 +205,7 @@ class DongleSessionManager(
         automotivePowerMonitor.start()
         automotivePowerSnapshot = automotivePowerMonitor.currentSnapshot()
         vehicleActive = AutomotivePowerPolicy.isVehicleActive(automotivePowerSnapshot)
+        applyV2(ConnectionEventV2.VehicleAvailabilityChanged(isVehicleGateOpen()), render = false)
     }
 
     fun start() {
@@ -318,6 +259,7 @@ class DongleSessionManager(
         executors.session.execute {
             shuttingDown = true
             started = false
+            cancelDebugVehicleWake()
             closeCurrentSession("service destroyed", scheduleReconnect = false)
             automotivePowerMonitor.stop()
             outboundQueue.clear()
@@ -390,17 +332,58 @@ class DongleSessionManager(
         }
     }
 
+    fun debugSimulateVehicleSleepCycle() {
+        if (!BuildConfig.DEBUG) {
+            logStore.info(SOURCE, "debugSimulateVehicleSleepCycle ignored: release build")
+            return
+        }
+        executors.session.execute {
+            if (debugVehicleWakeFuture != null) {
+                logStore.info(SOURCE, "Debug sleep cycle already running; ignoring duplicate request")
+                return@execute
+            }
+
+            val restoreDelayMs = Random.nextLong(
+                from = DEBUG_SLEEP_RESTORE_MIN_MS,
+                until = DEBUG_SLEEP_RESTORE_MAX_MS + 1L,
+            )
+            val sleepSnapshot = buildDebugVehicleSleepSnapshot()
+            val wakeSnapshot = buildDebugVehicleWakeSnapshot()
+
+            logStore.info(
+                SOURCE,
+                "Debug sleep cycle started: power off now, wake in ${restoreDelayMs}ms | ${AutomotivePowerPolicy.describeSnapshot(sleepSnapshot)}",
+            )
+
+            handleAutomotivePowerChanged(sleepSnapshot, POWER_REASON_SLEEPING)
+
+            debugVehicleWakeFuture = executors.scheduler.schedule(
+                {
+                    executors.session.execute {
+                        debugVehicleWakeFuture = null
+                        logStore.info(
+                            SOURCE,
+                            "Debug sleep cycle restoring power after ${restoreDelayMs}ms | ${AutomotivePowerPolicy.describeSnapshot(wakeSnapshot)}",
+                        )
+                        handleAutomotivePowerChanged(wakeSnapshot, "debug wake restore")
+                    }
+                },
+                restoreDelayMs,
+                TimeUnit.MILLISECONDS,
+            )
+        }
+    }
+
     fun refreshRuntimeSettings() {
         executors.session.execute {
-            applyRuntimeDeviceSettings()
+            applyRuntimeDeviceSettings(loadRuntimeDeviceSettings())
             refreshState()
         }
     }
 
     fun previewRuntimeSettings(settings: ProjectionDeviceSettings) {
         executors.session.execute {
-            microphoneInputManager.updateGain(settings.micSettings.gainMultiplier)
-            audioStreamManager.updateDeviceSettings(settings)
+            applyRuntimeDeviceSettings(settings)
         }
     }
 
@@ -421,6 +404,11 @@ class DongleSessionManager(
                 SOURCE,
                 "Video stream target changed: enabled=$enabled",
             )
+            if (!enabled && connectionEngineV2.snapshot().isStreamingActive()) {
+                stopFrameRequestLoop()
+            } else if (enabled && connectionEngineV2.snapshot().isStreamingActive()) {
+                startFrameRequestLoop()
+            }
             syncVideoFocus("ui visibility changed")
         }
     }
@@ -432,6 +420,7 @@ class DongleSessionManager(
             currentSelectedDeviceId = normalizedId
             pendingConnectionDeviceId = normalizedId
             pendingDeviceSelectionSent = false
+            applyV2(ConnectionEventV2.ManualSelectionRequested(normalizedId))
             logStore.info(SOURCE, "Manual device selection: ${describeKnownDevice(normalizedId)}")
 
             if (!started) {
@@ -488,7 +477,6 @@ class DongleSessionManager(
             logStore.info(SOURCE, "Requested key frame after surface attach")
         }
         executors.session.execute {
-            flowController.onSurfaceAttached()
             updateState(
                 state = if (_state.value.protocolPhase == ProjectionProtocolPhase.STREAMING_ACTIVE) {
                     ProjectionConnectionState.STREAMING
@@ -506,7 +494,6 @@ class DongleSessionManager(
         logStore.info(SOURCE, "Projection surface detached")
         renderer.detachSurface()
         executors.session.execute {
-            flowController.onSurfaceDetached()
             updateState(
                 state = if (currentSession == null) {
                     if (isVehicleGateOpen()) {
@@ -572,6 +559,7 @@ class DongleSessionManager(
             clearManualVehicleGateBypass("vehicle became inactive")
         }
         val gateIsOpen = isVehicleGateOpen()
+        applyV2(ConnectionEventV2.VehicleAvailabilityChanged(gateIsOpen), render = false)
 
         if (sessionMode != SessionMode.USB || shuttingDown) {
             return
@@ -692,8 +680,38 @@ class DongleSessionManager(
         )
     }
 
+    private fun buildDebugVehicleSleepSnapshot(): AutomotivePowerSnapshot {
+        return automotivePowerSnapshot.copy(
+            powerServiceConnected = true,
+            accState = PowerConstant.ACC_OFF,
+            powerState = PowerConstant.POWER_UNWOKGING,
+            currentScreenSignal = PowerConstant.SCREEN_HIDE,
+            welcomeScreenState = PowerConstant.SCREEN_HIDE,
+            screenStates = automotivePowerSnapshot.screenStates + mapOf(
+                PowerConstant.SCREEN_TYPE_WORK to PowerConstant.SCREEN_HIDE,
+            ),
+            longPressPower = false,
+        )
+    }
+
+    private fun buildDebugVehicleWakeSnapshot(): AutomotivePowerSnapshot {
+        return automotivePowerSnapshot.copy(
+            powerServiceConnected = true,
+            accState = PowerConstant.ACC_ON,
+            powerState = PowerConstant.POWER_WORKING,
+            currentScreenSignal = PowerConstant.SCREEN_SHOW,
+            welcomeScreenState = PowerConstant.SCREEN_SHOW,
+            screenStates = automotivePowerSnapshot.screenStates + mapOf(
+                PowerConstant.SCREEN_TYPE_WORK to PowerConstant.SCREEN_SHOW,
+            ),
+            longPressPower = false,
+        )
+    }
+
     private fun updateWaitingForVehicleState(reason: String) {
         cancelReconnect()
+        cancelOpenAckRecovery()
+        consecutiveOpenAckTimeouts = 0
         updateState(
             state = ProjectionConnectionState.WAITING_VEHICLE,
             message = buildVehicleWaitMessage(),
@@ -749,6 +767,7 @@ class DongleSessionManager(
     }
 
     private fun connectOrRequestPermission(reason: String) {
+        cancelOpenAckRecovery()
         if (sessionMode != SessionMode.USB || !started || shuttingDown) return
         if (!isVehicleGateOpen()) {
             updateWaitingForVehicleState(reason)
@@ -758,6 +777,7 @@ class DongleSessionManager(
 
         val device = usbTransport.findKnownDevice()
         if (device == null) {
+            applyV2(ConnectionEventV2.TransportDetached, render = false)
             cancelReconnect()
             currentDevice = null
             currentConnectionLabel = null
@@ -808,6 +828,7 @@ class DongleSessionManager(
 
         openingUsbDeviceId = device.deviceId
         lastUsbConnectRequestedAtMs = SystemClock.elapsedRealtime()
+        applyV2TransportOpening(adapterLabel)
         updateState(
             state = ProjectionConnectionState.CONNECTING,
             message = "Opening USB connection ($reason)",
@@ -851,7 +872,11 @@ class DongleSessionManager(
             resetProjectionRuntime("fresh usb session")
 
             ensureWriteLoop()
-            flowController.onSessionReady(sessionConfig, includeBrandingAssets)
+            startReadLoop(session)
+            applyV2TransportOpened(
+                connectionLabel = session.description,
+                includeBrandingAssets = includeBrandingAssets,
+            )
             armOpenAckTimeout(session)
             if (includeBrandingAssets) {
                 brandingInitializedDeviceId = device.deviceId
@@ -868,6 +893,7 @@ class DongleSessionManager(
 
     private fun openReplaySession(capturePath: String) {
         try {
+            applyV2TransportOpening("Replay ${File(capturePath).name}")
             val session = CaptureReplaySession(capturePath, logStore)
             currentSession = session
             currentDevice = null
@@ -876,7 +902,11 @@ class DongleSessionManager(
             resetProjectionRuntime("fresh replay session")
 
             ensureWriteLoop()
-            flowController.onSessionReady(sessionConfig, includeBrandingAssets = true)
+            startReadLoop(session)
+            applyV2TransportOpened(
+                connectionLabel = session.description,
+                includeBrandingAssets = true,
+            )
         } catch (t: Throwable) {
             logStore.error(SOURCE, "Unable to open replay session", t)
             closeCurrentSession("open replay failed", scheduleReconnect = false)
@@ -1085,6 +1115,7 @@ class DongleSessionManager(
             delayMs = CONNECT_ATTEMPT_POST_PLUGGED_STALL_LOG_MS,
             stage = "waiting for Phase 7/8 after Plugged",
         )
+        schedulePostPluggedReconnect(attempt.id)
     }
 
     private fun noteConnectAttemptWifiConnected() {
@@ -1122,6 +1153,7 @@ class DongleSessionManager(
                 if (attempt.phase8AtMs == null) {
                     attempt.phase8AtMs = now
                 }
+                cancelPostPluggedReconnect()
                 completeConnectAttempt("streaming active", terminalAtMs = now)
             }
 
@@ -1269,6 +1301,366 @@ class DongleSessionManager(
         return if (durationMs >= 0L) "${durationMs}ms" else "-"
     }
 
+    private fun applyV2(
+        event: ConnectionEventV2,
+        render: Boolean = shouldRenderV2State(),
+        streamDescription: String? = _state.value.streamDescription,
+    ): ConnectionSnapshotV2 {
+        val result = connectionEngineV2.onEvent(event)
+        result.effects.forEach(::executeV2Effect)
+        if (render && shouldRenderV2State(result.snapshot)) {
+            renderConnectionStateFromV2(
+                snapshot = result.snapshot,
+                streamDescription = streamDescription,
+            )
+        }
+        return result.snapshot
+    }
+
+    private fun applyV2TransportOpening(connectionLabel: String?) {
+        transportEpochV2 += 1L
+        applyV2(
+            ConnectionEventV2.TransportOpening(
+                epoch = transportEpochV2,
+                connectionLabel = connectionLabel,
+            ),
+            render = true,
+        )
+    }
+
+    private fun applyV2TransportOpened(
+        connectionLabel: String?,
+        includeBrandingAssets: Boolean,
+    ) {
+        applyV2(
+            ConnectionEventV2.TransportOpened(
+                epoch = transportEpochV2,
+                connectionLabel = connectionLabel,
+                includeBrandingAssets = includeBrandingAssets,
+            ),
+            render = true,
+        )
+    }
+
+    private fun applyV2TransportClosed(reason: String) {
+        applyV2(
+            if (isTransportFailureReason(reason)) {
+                ConnectionEventV2.TransportFailed(reason)
+            } else {
+                ConnectionEventV2.TransportClosed(reason)
+            },
+            render = false,
+        )
+    }
+
+    private fun applyV2PolicyUpdated(render: Boolean = shouldRenderV2State()) {
+        applyV2(
+            ConnectionEventV2.PolicyUpdated(
+                knownDeviceCount = effectiveKnownDeviceCount(),
+                autoConnectEligible = shouldAutoConnectKnownDevices(),
+                manualSelectionRequired = requiresManualDeviceSelection(),
+            ),
+            render = render,
+        )
+    }
+
+    private fun isTransportFailureReason(reason: String): Boolean {
+        return reason.contains("failed", ignoreCase = true) ||
+            reason.contains("timeout", ignoreCase = true) ||
+            reason.contains("error", ignoreCase = true)
+    }
+
+    private fun shouldRenderV2State(snapshot: ConnectionSnapshotV2 = connectionEngineV2.snapshot()): Boolean {
+        return currentSession != null ||
+            snapshot.transport.state == TransportStateV2.OPENING ||
+            snapshot.transport.state == TransportStateV2.OPEN
+    }
+
+    private fun executeV2Effect(effect: ConnectionEffectV2) {
+        when (effect) {
+            ConnectionEffectV2.StartHeartbeat -> startHeartbeatLoop()
+            ConnectionEffectV2.StopFrameRequests -> stopFrameRequestLoop()
+            ConnectionEffectV2.StartBleAdvertising -> startBleAdvertising("protocol v2")
+            ConnectionEffectV2.StopBleAdvertising -> stopBleAdvertising()
+            ConnectionEffectV2.RequestAutoConnect -> requestAutoConnect("protocol v2")
+            ConnectionEffectV2.ClearPendingAutoConnect -> clearAutoConnectPending()
+            ConnectionEffectV2.RequestKeyFrame -> {
+                queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.REQUEST_KEY_FRAME))
+                logStore.info(SOURCE, "Protocol v2 requested immediate key frame")
+            }
+
+            ConnectionEffectV2.StartFrameRequests -> startFrameRequestLoop()
+
+            is ConnectionEffectV2.QueueInitSequence -> {
+                queueInitSequenceV2(includeBrandingAssets = effect.includeBrandingAssets)
+            }
+        }
+    }
+
+    private fun queueInitSequenceV2(includeBrandingAssets: Boolean) {
+        logStore.info(
+            SOURCE,
+            "Queueing V2 init sequence: ${sessionConfig.width}x${sessionConfig.height}@${sessionConfig.fps} " +
+                "safeArea=${sessionConfig.carplaySafeAreaBottomDp}dp dpi=${sessionConfig.dpi} " +
+                "name=${sessionConfig.boxName} mic=${if (sessionConfig.useAdapterMic) "adapter" else "phone"} " +
+                "audio=${if (sessionConfig.useBluetoothAudio) "car_bt" else "adapter_usb"}",
+        )
+        logStore.info(
+            SOURCE,
+            "Advanced adapter features require firmware flags: DashboardInfo=7, GNSSCapability=1/3, HudGPSSwitch=1, AdvancedFeatures=1",
+        )
+        buildInitMessagesV2(
+            config = sessionConfig,
+            includeBrandingAssets = includeBrandingAssets,
+        ).forEach(::queueOutbound)
+    }
+
+    private fun buildInitMessagesV2(
+        config: ProjectionSessionConfig,
+        includeBrandingAssets: Boolean,
+    ): List<ByteArray> = buildList {
+        // SendFile messages must precede Open per host_app_guide.md §2 init sequence
+        add(Cpc200Protocol.sendNumber("/tmp/screen_dpi", config.dpi))
+        add(Cpc200Protocol.open(config))
+        add(Cpc200Protocol.sendBoolean("/tmp/night_mode", config.nightMode))
+        add(Cpc200Protocol.sendNumber("/tmp/hand_drive_mode", config.handDriveMode))
+        add(Cpc200Protocol.sendBoolean("/tmp/charge_mode", true))
+        add(Cpc200Protocol.sendString("/etc/box_name", config.boxName))
+        if (includeBrandingAssets) {
+            Cpc200Protocol.oemIcon(config)?.let { add(it) }
+            Cpc200Protocol.icon120(config)?.let { add(it) }
+            Cpc200Protocol.icon180(config)?.let { add(it) }
+            Cpc200Protocol.icon256(config)?.let { add(it) }
+            logStore.info(
+                SOURCE,
+                "Queueing OEM branding: ${config.oemBranding.label} name=${config.oemBranding.name}",
+            )
+        } else {
+            logStore.info(SOURCE, "Skipping OEM branding assets for reconnect init")
+        }
+        add(Cpc200Protocol.boxSettings(config))
+        add(Cpc200Protocol.airplayConfig(config))
+        add(Cpc200Protocol.command(Cpc200Protocol.Command.SUPPORT_WIFI))
+        add(Cpc200Protocol.command(Cpc200Protocol.Command.SUPPORT_AUTO_CONNECT))
+        add(
+            Cpc200Protocol.command(
+                if (config.wifi5g) {
+                    Cpc200Protocol.Command.USE_5G_WIFI
+                } else {
+                    Cpc200Protocol.Command.USE_24G_WIFI
+                },
+            ),
+        )
+        add(
+            Cpc200Protocol.command(
+                if (config.useAdapterMic) {
+                    Cpc200Protocol.Command.MIC
+                } else {
+                    Cpc200Protocol.Command.USE_PHONE_MIC
+                },
+            ),
+        )
+        add(
+            Cpc200Protocol.command(
+                if (config.useBluetoothAudio) {
+                    Cpc200Protocol.Command.USE_BLUETOOTH_AUDIO
+                } else {
+                    Cpc200Protocol.Command.USE_BOX_TRANS_AUDIO
+                },
+            ),
+        )
+        if (config.androidWorkMode) {
+            add(Cpc200Protocol.sendBoolean("/etc/android_work_mode", true))
+        }
+    }
+
+    private fun renderConnectionStateFromV2(
+        snapshot: ConnectionSnapshotV2 = connectionEngineV2.snapshot(),
+        streamDescription: String? = _state.value.streamDescription,
+    ) {
+        val protocolPhase = when {
+            snapshot.projection.state == ProjectionStateV2.FAILED -> ProjectionProtocolPhase.NEGOTIATION_FAILED
+            snapshot.projection.state == ProjectionStateV2.ENDED -> ProjectionProtocolPhase.SESSION_ENDED
+            snapshot.isStreamingActive() -> ProjectionProtocolPhase.STREAMING_ACTIVE
+            snapshot.projection.state == ProjectionStateV2.NEGOTIATING -> ProjectionProtocolPhase.AIRPLAY_NEGOTIATING
+            snapshot.projection.state == ProjectionStateV2.PLUGGED -> ProjectionProtocolPhase.CARPLAY_SESSION_SETUP
+            snapshot.discovery.state == DiscoveryStateV2.RETRYING ||
+                snapshot.projection.state == ProjectionStateV2.DISCONNECTED -> ProjectionProtocolPhase.WAITING_RETRY
+            snapshot.discovery.state == DiscoveryStateV2.SCANNING -> ProjectionProtocolPhase.PHONE_SEARCH
+            snapshot.discovery.state == DiscoveryStateV2.DEVICE_FOUND ||
+                snapshot.discovery.state == DiscoveryStateV2.BT_CONNECTING ||
+                snapshot.discovery.state == DiscoveryStateV2.BT_CONNECTED -> ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED
+            snapshot.transport.openAcknowledged -> ProjectionProtocolPhase.INIT_ECHO
+            snapshot.transport.state == TransportStateV2.OPEN ||
+                snapshot.transport.state == TransportStateV2.OPENING -> ProjectionProtocolPhase.HOST_INIT
+            else -> ProjectionProtocolPhase.NONE
+        }
+
+        val state = when {
+            snapshot.transport.state == TransportStateV2.FAILED -> ProjectionConnectionState.ERROR
+            snapshot.isStreamingActive() -> ProjectionConnectionState.STREAMING
+            snapshot.projection.state == ProjectionStateV2.PLUGGED ||
+                snapshot.projection.state == ProjectionStateV2.NEGOTIATING -> ProjectionConnectionState.CONNECTING
+            snapshot.projection.state == ProjectionStateV2.DISCONNECTED ||
+                snapshot.projection.state == ProjectionStateV2.ENDED ||
+                snapshot.projection.state == ProjectionStateV2.FAILED ||
+                snapshot.discovery.state == DiscoveryStateV2.RETRYING ||
+                snapshot.discovery.state == DiscoveryStateV2.MANUAL_SELECTION -> ProjectionConnectionState.WAITING_PHONE
+            snapshot.discovery.state == DiscoveryStateV2.SCANNING ||
+                snapshot.discovery.state == DiscoveryStateV2.DEVICE_FOUND ||
+                snapshot.discovery.state == DiscoveryStateV2.BT_CONNECTING ||
+                snapshot.discovery.state == DiscoveryStateV2.BT_CONNECTED -> ProjectionConnectionState.CONNECTING
+            snapshot.transport.state == TransportStateV2.OPENING -> ProjectionConnectionState.CONNECTING
+            snapshot.transport.state == TransportStateV2.OPEN && !snapshot.transport.openAcknowledged -> ProjectionConnectionState.INIT
+            snapshot.transport.state == TransportStateV2.OPEN -> ProjectionConnectionState.WAITING_PHONE
+            !snapshot.policy.vehicleReady && currentSession == null -> ProjectionConnectionState.WAITING_VEHICLE
+            else -> _state.value.state
+        }
+
+        val message = when {
+            snapshot.transport.state == TransportStateV2.FAILED -> {
+                "Connection lost: ${snapshot.transport.lastFailure ?: "transport failed"}"
+            }
+
+            snapshot.isStreamingActive() -> {
+                if (surfaceAttached) {
+                    "CarPlay streaming active"
+                } else {
+                    "CarPlay streaming active while activity is in background"
+                }
+            }
+
+            snapshot.projection.state == ProjectionStateV2.NEGOTIATING -> {
+                "CarPlay negotiation in progress"
+            }
+
+            snapshot.projection.state == ProjectionStateV2.PLUGGED -> {
+                "CarPlay linked. Finishing stream negotiation"
+            }
+
+            snapshot.projection.state == ProjectionStateV2.FAILED -> {
+                "Negotiation failed. ${v2RetryHint(snapshot)}"
+            }
+
+            snapshot.projection.state == ProjectionStateV2.ENDED -> {
+                "Session ended. ${v2RetryHint(snapshot)}"
+            }
+
+            snapshot.projection.state == ProjectionStateV2.DISCONNECTED ||
+                snapshot.discovery.state == DiscoveryStateV2.RETRYING -> {
+                when {
+                    snapshot.discovery.lastReason == "bluetooth disconnected" -> {
+                        "Bluetooth disconnected. ${v2RetryHint(snapshot)}"
+                    }
+
+                    snapshot.discovery.lastReason == "device connect failed" -> {
+                        "Connection failed. ${v2RetryHint(snapshot)}"
+                    }
+
+                    snapshot.discovery.lastReason == "device not found" -> {
+                        "No known device found. ${v2RetryHint(snapshot)}"
+                    }
+
+                    else -> {
+                        "Phone disconnected. ${v2RetryHint(snapshot)}"
+                    }
+                }
+            }
+
+            snapshot.discovery.state == DiscoveryStateV2.MANUAL_SELECTION -> {
+                pendingConnectionDeviceId?.let { pendingId ->
+                    "Connecting to ${describeKnownDevice(pendingId)}"
+                } ?: "Adapter ready. Select iPhone to connect"
+            }
+
+            snapshot.discovery.state == DiscoveryStateV2.SCANNING -> {
+                "Scanning for known iPhone"
+            }
+
+            snapshot.discovery.state == DiscoveryStateV2.DEVICE_FOUND -> {
+                "Phone found. Establishing Bluetooth link"
+            }
+
+            snapshot.discovery.state == DiscoveryStateV2.BT_CONNECTING -> {
+                if (snapshot.discovery.lastReason == "bluetooth pairing in progress") {
+                    "Bluetooth pairing in progress"
+                } else {
+                    "Phone found. Establishing Bluetooth link"
+                }
+            }
+
+            snapshot.discovery.state == DiscoveryStateV2.BT_CONNECTED -> {
+                "Bluetooth connected. Waiting for CarPlay session"
+            }
+
+            snapshot.transport.state == TransportStateV2.OPEN && !snapshot.transport.openAcknowledged -> {
+                "Init queued. Waiting for adapter Open acknowledgment"
+            }
+
+            snapshot.transport.state == TransportStateV2.OPEN && snapshot.transport.openAcknowledged -> {
+                when (snapshot.policy.selectionMode) {
+                    SelectionModeV2.MANUAL -> "Adapter ready. Select iPhone to connect"
+                    SelectionModeV2.AUTO -> "Adapter ready. Scanning and waiting for iPhone"
+                    SelectionModeV2.NONE -> {
+                        if (snapshot.policy.knownDeviceCount > 0) {
+                            "Adapter ready. Waiting for iPhone"
+                        } else {
+                            "Adapter ready. BLE pairing mode active"
+                        }
+                    }
+                }
+            }
+
+            snapshot.transport.state == TransportStateV2.OPENING -> {
+                "Opening USB connection"
+            }
+
+            else -> _state.value.statusMessage
+        }
+
+        val videoWidth = snapshot.projection.videoWidth
+            ?: if (snapshot.isSessionEstablished()) snapshot.transport.width else null
+        val videoHeight = snapshot.projection.videoHeight
+            ?: if (snapshot.isSessionEstablished()) snapshot.transport.height else null
+        val resolvedPhoneDescription = when {
+            snapshot.projection.phoneType != null -> Cpc200Protocol.describePhoneType(snapshot.projection.phoneType)
+            snapshot.discovery.activeDeviceId != null -> describeKnownDevice(snapshot.discovery.activeDeviceId)
+            currentPeerBluetoothDeviceId != null -> describeKnownDevice(currentPeerBluetoothDeviceId)
+            currentSessionDeviceId != null -> describeKnownDevice(currentSessionDeviceId)
+            else -> null
+        }
+        val resolvedStreamDescription = if (snapshot.isStreamingActive()) {
+            streamDescription ?: _state.value.streamDescription
+        } else {
+            null
+        }
+
+        updateState(
+            state = state,
+            protocolPhase = protocolPhase,
+            message = message,
+            adapterDescription = snapshot.transport.connectionLabel ?: currentConnectionLabel,
+            phoneDescription = resolvedPhoneDescription,
+            streamDescription = resolvedStreamDescription,
+            videoWidth = videoWidth,
+            videoHeight = videoHeight,
+            surfaceAttached = surfaceAttached,
+            lastError = if (state == ProjectionConnectionState.ERROR) {
+                snapshot.transport.lastFailure ?: _state.value.lastError
+            } else {
+                null
+            },
+        )
+    }
+
+    private fun v2RetryHint(snapshot: ConnectionSnapshotV2): String {
+        return when {
+            snapshot.policy.selectionMode == SelectionModeV2.MANUAL -> "Select iPhone to connect"
+            snapshot.policy.knownDeviceCount > 0 -> "Rescanning and waiting for iPhone"
+            else -> "BLE pairing mode active"
+        }
+    }
+
     private fun resetProjectionRuntime(reason: String) {
         ProjectionFrameSnapshotStore.clear()
         currentSessionDeviceId = null
@@ -1337,11 +1729,9 @@ class DongleSessionManager(
     }
 
     private fun effectiveKnownDeviceCount(): Int {
-        return if (availableDeviceIds.isNotEmpty()) {
-            availableDeviceIds.size
-        } else {
-            knownDevices.size
-        }
+        if (availableDeviceIds.isNotEmpty()) return availableDeviceIds.size
+        if (knownDevices.isNotEmpty()) return knownDevices.size
+        return if (settingsStore.getLastConnectedDeviceId() != null) 1 else 0
     }
 
     private fun requiresManualDeviceSelection(): Boolean {
@@ -1352,7 +1742,8 @@ class DongleSessionManager(
 
     private fun shouldAutoConnectKnownDevices(): Boolean {
         if (!settingsStore.isAutoConnectEnabled()) return false
-        if (knownDevices.isEmpty()) return false
+        val hasKnown = knownDevices.isNotEmpty() || settingsStore.getLastConnectedDeviceId() != null
+        if (!hasKnown) return false
         if (!AutomotivePowerPolicy.isReadyForAutoConnect(automotivePowerSnapshot)) return false
         if (pendingConnectionDeviceId != null) return true
         return !requiresManualDeviceSelection()
@@ -1413,8 +1804,11 @@ class DongleSessionManager(
         )
     }
 
-    private fun applyRuntimeDeviceSettings() {
-        val settings = settingsStore.getSettings(resolveCurrentDeviceId())
+    private fun loadRuntimeDeviceSettings(): ProjectionDeviceSettings {
+        return settingsStore.getSettings(resolveCurrentDeviceId())
+    }
+
+    private fun applyRuntimeDeviceSettings(settings: ProjectionDeviceSettings) {
         microphoneInputManager.updateGain(settings.micSettings.gainMultiplier)
         audioStreamManager.updateDeviceSettings(settings)
     }
@@ -1543,7 +1937,7 @@ class DongleSessionManager(
         currentSessionDeviceId = normalizedId
         settingsStore.setLastConnectedDeviceId(normalizedId)
         logStore.info(SOURCE, "Session device -> ${describeKnownDevice(normalizedId)} ($reason)")
-        applyRuntimeDeviceSettings()
+        applyRuntimeDeviceSettings(loadRuntimeDeviceSettings())
     }
 
     private fun resolveSessionDeviceCandidateId(): String? {
@@ -1573,7 +1967,7 @@ class DongleSessionManager(
             settingsStore.setLastConnectedDeviceId(activeId)
             snapshot.activeDeviceName?.let { settingsStore.setCachedDeviceName(activeId, it) }
             if (!isProjectionSessionEstablished() && currentSelectedDeviceId == null && pendingConnectionDeviceId == null) {
-                applyRuntimeDeviceSettings()
+                applyRuntimeDeviceSettings(loadRuntimeDeviceSettings())
             }
         } else {
             catalogActiveDeviceId = null
@@ -1813,19 +2207,13 @@ class DongleSessionManager(
             pendingDeviceSelectionSent = false
         }
         noteConnectAttemptFirstVideo(safeMeta.width, safeMeta.height)
-        flowController.onVideoFrameReceived(safeMeta.width, safeMeta.height)
-
-        updateState(
-            state = ProjectionConnectionState.STREAMING,
-            message = if (surfaceAttached) {
-                "Streaming H.264 ${safeMeta.width}x${safeMeta.height}"
-            } else {
-                "CarPlay streaming active while activity is in background"
-            },
+        if (openAckTimeoutFuture != null) {
+            cancelOpenAckTimeout()
+            consecutiveOpenAckTimeouts = 0
+        }
+        applyV2(
+            ConnectionEventV2.FirstVideoFrame(safeMeta.width, safeMeta.height),
             streamDescription = "${safeMeta.width}x${safeMeta.height}, flags=${safeMeta.flags}",
-            videoWidth = safeMeta.width,
-            videoHeight = safeMeta.height,
-            surfaceAttached = surfaceAttached,
         )
     }
 
@@ -1843,6 +2231,7 @@ class DongleSessionManager(
 
             Cpc200Protocol.MessageType.OPEN -> {
                 cancelOpenAckTimeout()
+                consecutiveOpenAckTimeouts = 0
                 val openAckAtMs = SystemClock.elapsedRealtime()
                 lastOpenAckAtMs = openAckAtMs
                 if (payload != null) {
@@ -1872,14 +2261,29 @@ class DongleSessionManager(
                         videoWidth = openedInfo.width,
                         videoHeight = openedInfo.height,
                     )
+                    applyV2(
+                        ConnectionEventV2.OpenAcknowledged(
+                            width = openedInfo.width,
+                            height = openedInfo.height,
+                            fps = openedInfo.fps,
+                        ),
+                    )
                 } else {
                     logStore.info(SOURCE, "Open acknowledged by adapter")
+                    applyV2(
+                        ConnectionEventV2.OpenAcknowledged(
+                            width = null,
+                            height = null,
+                            fps = null,
+                        ),
+                    )
                 }
-                flowController.onDongleOpened()
             }
 
             Cpc200Protocol.MessageType.PLUGGED -> {
                 val safePayload = payload ?: return
+                cancelOpenAckTimeout()
+                consecutiveOpenAckTimeouts = 0
                 val pluggedInfo = Cpc200Protocol.parsePlugged(safePayload)
                 currentPhoneType = pluggedInfo.phoneType
                 rememberSessionDevice(resolveSessionDeviceCandidateId(), "plugged")
@@ -1889,7 +2293,12 @@ class DongleSessionManager(
                     SOURCE,
                     "Phone plugged: ${Cpc200Protocol.describePhoneType(pluggedInfo.phoneType)}, wifi=${pluggedInfo.wifiState}",
                 )
-                flowController.onPlugged(pluggedInfo)
+                applyV2(
+                    ConnectionEventV2.Plugged(
+                        phoneType = pluggedInfo.phoneType,
+                        wifiState = pluggedInfo.wifiState,
+                    ),
+                )
                 reapplySessionRouting("plugged")
                 syncVideoFocus("plugged")
             }
@@ -1897,6 +2306,10 @@ class DongleSessionManager(
             Cpc200Protocol.MessageType.PHASE -> {
                 val safePayload = payload ?: return
                 val phase = Cpc200Protocol.parsePhase(safePayload)
+                if (phase == 8) {
+                    cancelOpenAckTimeout()
+                    consecutiveOpenAckTimeouts = 0
+                }
                 if (phase == 0 || phase == 13) {
                     currentPhoneType = null
                     currentSessionDeviceId = null
@@ -1904,7 +2317,7 @@ class DongleSessionManager(
                 }
                 noteConnectAttemptPhase(phase)
                 logStore.info(SOURCE, "Phase message: $phase")
-                flowController.onPhase(phase)
+                applyV2(ConnectionEventV2.RawPhaseReceived(phase))
                 if (phase == 8) {
                     syncVideoFocus("phase 8")
                 }
@@ -1916,7 +2329,7 @@ class DongleSessionManager(
                 currentPeerBluetoothDeviceId = null
                 noteConnectAttemptUnplugged()
                 logStore.info(SOURCE, "Phone unplugged")
-                flowController.onUnplugged()
+                applyV2(ConnectionEventV2.Unplugged)
             }
 
             Cpc200Protocol.MessageType.COMMAND -> {
@@ -1929,7 +2342,7 @@ class DongleSessionManager(
                 logStore.info(SOURCE, "Adapter command: ${Cpc200Protocol.describeCommand(command)}")
                 when (command) {
                     Cpc200Protocol.Command.START_RECORD_AUDIO -> {
-                        applyRuntimeDeviceSettings()
+                        applyRuntimeDeviceSettings(loadRuntimeDeviceSettings())
                         microphoneInputManager.start()
                     }
 
@@ -1948,7 +2361,44 @@ class DongleSessionManager(
                 if (command == Cpc200Protocol.Command.WIFI_CONNECTED) {
                     noteConnectAttemptWifiConnected()
                 }
-                flowController.onCommand(command)
+                when (command) {
+                    Cpc200Protocol.Command.SCANNING_DEVICE -> {
+                        applyV2(ConnectionEventV2.DiscoveryScanning("adapter command"))
+                    }
+
+                    Cpc200Protocol.Command.DEVICE_FOUND -> {
+                        applyV2(ConnectionEventV2.DeviceFound(resolveSessionDeviceCandidateId()))
+                    }
+
+                    Cpc200Protocol.Command.BT_CONNECTED -> {
+                        applyV2(ConnectionEventV2.BluetoothConnected(currentPeerBluetoothDeviceId))
+                    }
+
+                    Cpc200Protocol.Command.BT_DISCONNECTED -> {
+                        applyV2(ConnectionEventV2.BluetoothDisconnected)
+                    }
+
+                    Cpc200Protocol.Command.BT_PAIR_START -> {
+                        applyV2(ConnectionEventV2.BluetoothPairingStarted)
+                    }
+
+                    Cpc200Protocol.Command.CONNECT_DEVICE_FAILED -> {
+                        applyV2(ConnectionEventV2.ConnectDeviceFailed)
+                    }
+
+                    Cpc200Protocol.Command.DEVICE_NOT_FOUND -> {
+                        applyV2(ConnectionEventV2.DeviceNotFound)
+                    }
+
+                    Cpc200Protocol.Command.REQUEST_HOST_UI -> {
+                        _events.tryEmit(ProjectionUiEvent.OpenSettings)
+                        logStore.info(SOURCE, "Adapter requested host UI")
+                    }
+
+                    Cpc200Protocol.Command.HIDE -> {
+                        logStore.info(SOURCE, "Phone requested projection hide")
+                    }
+                }
             }
 
             Cpc200Protocol.MessageType.BOX_SETTINGS -> {
@@ -1968,6 +2418,7 @@ class DongleSessionManager(
                 currentPeerBluetoothDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
                 noteConnectAttemptBluetoothConnectStart(currentPeerBluetoothDeviceId)
                 logStore.info(SOURCE, "BluetoothConnectStart: ${describeKnownDevice(currentPeerBluetoothDeviceId)}")
+                applyV2(ConnectionEventV2.BluetoothConnectStarting(currentPeerBluetoothDeviceId))
                 refreshState(phoneDescription = describeKnownDevice(currentPeerBluetoothDeviceId))
             }
 
@@ -1976,12 +2427,14 @@ class DongleSessionManager(
                 currentPeerBluetoothDeviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
                 noteConnectAttemptBluetoothConnected(currentPeerBluetoothDeviceId)
                 logStore.info(SOURCE, "BluetoothConnected: ${describeKnownDevice(currentPeerBluetoothDeviceId)}")
+                applyV2(ConnectionEventV2.BluetoothConnected(currentPeerBluetoothDeviceId))
                 refreshState(phoneDescription = describeKnownDevice(currentPeerBluetoothDeviceId))
             }
 
             Cpc200Protocol.MessageType.BLUETOOTH_DISCONNECT -> {
                 logStore.info(SOURCE, "BluetoothDisconnect")
                 currentPeerBluetoothDeviceId = null
+                applyV2(ConnectionEventV2.BluetoothDisconnected)
                 refreshState()
             }
 
@@ -2032,7 +2485,8 @@ class DongleSessionManager(
                 val devices = DongleDeviceCatalogParser.parsePairedList(safePayload)
                 rememberKnownDevices(devices)
                 logPairedDevices(devices)
-                applyRuntimeDeviceSettings()
+                applyRuntimeDeviceSettings(loadRuntimeDeviceSettings())
+                applyV2PolicyUpdated()
                 refreshState()
             }
 
@@ -2051,10 +2505,15 @@ class DongleSessionManager(
         cancelReconnect()
         cancelSleepDisconnect()
         cancelOpenAckTimeout()
+        cancelOpenAckRecovery()
+        cancelPostPluggedReconnect()
+        if (reason != OPEN_ACK_TIMEOUT_REASON) {
+            consecutiveOpenAckTimeouts = 0
+        }
         if (activeConnectAttempt != null) {
             completeConnectAttempt("aborted: session closed ($reason)")
         }
-        flowController.onSessionClosed(reason)
+        applyV2TransportClosed(reason)
         stopHeartbeatLoop()
         stopFrameRequestLoop()
 
@@ -2110,21 +2569,14 @@ class DongleSessionManager(
     }
 
     private fun canControlVideoFocus(): Boolean {
-        val phase = _state.value.protocolPhase
-        return currentPhoneType != null ||
-            phase == ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
-            phase == ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
-            phase == ProjectionProtocolPhase.STREAMING_ACTIVE
+        val snapshot = connectionEngineV2.snapshot()
+        return currentPhoneType != null || snapshot.isSessionEstablished()
     }
 
     private fun isProjectionSessionEstablished(): Boolean {
-        val phase = _state.value.protocolPhase
         return currentSession != null && (
             currentPhoneType != null ||
-                _state.value.state == ProjectionConnectionState.STREAMING ||
-                phase == ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
-                phase == ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
-                phase == ProjectionProtocolPhase.STREAMING_ACTIVE
+                connectionEngineV2.snapshot().isSessionEstablished()
             )
     }
 
@@ -2237,6 +2689,11 @@ class DongleSessionManager(
         sleepDisconnectFuture = null
     }
 
+    private fun cancelDebugVehicleWake() {
+        debugVehicleWakeFuture?.cancel(false)
+        debugVehicleWakeFuture = null
+    }
+
     private fun armOpenAckTimeout(session: DongleConnectionSession) {
         cancelOpenAckTimeout()
         openAckTimeoutFuture = executors.scheduler.schedule(
@@ -2249,11 +2706,33 @@ class DongleSessionManager(
                     ) {
                         return@execute
                     }
+                    val timeoutCount = consecutiveOpenAckTimeouts + 1
+                    consecutiveOpenAckTimeouts = timeoutCount
+                    if (timeoutCount > OPEN_ACK_MAX_CONSECUTIVE_TIMEOUTS) {
+                        logStore.info(
+                            SOURCE,
+                            "Open ACK timeout after ${OPEN_ACK_TIMEOUT_MS} ms; " +
+                                "max retries reached ($timeoutCount/${OPEN_ACK_MAX_CONSECUTIVE_TIMEOUTS}), " +
+                                "adapter unresponsive — stopping auto-retry (${session.description})",
+                        )
+                        consecutiveOpenAckTimeouts = 0
+                        closeCurrentSession(OPEN_ACK_TIMEOUT_REASON, scheduleReconnect = false)
+                        applyV2(ConnectionEventV2.TransportFailed("adapter unresponsive after $timeoutCount timeouts"))
+                        updateState(
+                            state = ProjectionConnectionState.ERROR,
+                            message = "Adapter not responding. Reconnect USB cable or restart.",
+                            lastError = "Open ACK timeout after $timeoutCount attempts",
+                        )
+                        return@execute
+                    }
+                    val recoveryDelayMs = openAckRecoveryDelayMs(timeoutCount)
                     logStore.info(
                         SOURCE,
-                        "Open ACK timeout after ${OPEN_ACK_TIMEOUT_MS} ms; restarting USB session (${session.description})",
+                        "Open ACK timeout after ${OPEN_ACK_TIMEOUT_MS} ms; scheduling USB reopen in $recoveryDelayMs ms " +
+                            "(timeout #$timeoutCount, ${session.description})",
                     )
-                    restartSessionNow("open ack timeout")
+                    closeCurrentSession(OPEN_ACK_TIMEOUT_REASON, scheduleReconnect = false)
+                    scheduleOpenAckRecovery(recoveryDelayMs)
                 }
             },
             OPEN_ACK_TIMEOUT_MS,
@@ -2264,6 +2743,76 @@ class DongleSessionManager(
     private fun cancelOpenAckTimeout() {
         openAckTimeoutFuture?.cancel(false)
         openAckTimeoutFuture = null
+    }
+
+    private fun scheduleOpenAckRecovery(delayMs: Long) {
+        cancelOpenAckRecovery()
+        openAckRecoveryFuture = executors.scheduler.schedule(
+            {
+                executors.session.execute {
+                    openAckRecoveryFuture = null
+                    if (
+                        !started ||
+                        shuttingDown ||
+                        sessionMode != SessionMode.USB ||
+                        currentSession != null
+                    ) {
+                        return@execute
+                    }
+                    if (!isVehicleGateOpen()) {
+                        updateWaitingForVehicleState(OPEN_ACK_TIMEOUT_REASON)
+                        return@execute
+                    }
+                    sessionConfig = buildSessionConfig()
+                    logStore.info(
+                        SOURCE,
+                        "Reopening USB after Open ACK timeout delay (${delayMs} ms, timeout streak=$consecutiveOpenAckTimeouts)",
+                    )
+                    connectOrRequestPermission(OPEN_ACK_TIMEOUT_REASON)
+                }
+            },
+            delayMs,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun cancelOpenAckRecovery() {
+        openAckRecoveryFuture?.cancel(false)
+        openAckRecoveryFuture = null
+    }
+
+    private fun schedulePostPluggedReconnect(attemptId: Int) {
+        postPluggedReconnectFuture?.cancel(false)
+        postPluggedReconnectFuture = executors.scheduler.schedule(
+            {
+                executors.session.execute {
+                    postPluggedReconnectFuture = null
+                    val attempt = activeConnectAttempt ?: return@execute
+                    if (attempt.id != attemptId) return@execute
+                    if (attempt.phase8AtMs != null || attempt.firstVideoAtMs != null) return@execute
+                    logStore.info(
+                        SOURCE,
+                        "Post-plugged video stall: no Phase 8 in ${CONNECT_ATTEMPT_POST_PLUGGED_STALL_RECONNECT_MS}ms; force reconnect",
+                    )
+                    restartSessionNow("post-plugged video stall")
+                }
+            },
+            CONNECT_ATTEMPT_POST_PLUGGED_STALL_RECONNECT_MS,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun cancelPostPluggedReconnect() {
+        postPluggedReconnectFuture?.cancel(false)
+        postPluggedReconnectFuture = null
+    }
+
+    private fun openAckRecoveryDelayMs(timeoutCount: Int): Long {
+        return if (timeoutCount <= 1) {
+            OPEN_ACK_RECOVERY_DELAY_INITIAL_MS
+        } else {
+            OPEN_ACK_RECOVERY_DELAY_REPEATED_MS
+        }
     }
 
     private fun armManualVehicleGateBypass(reason: String) {

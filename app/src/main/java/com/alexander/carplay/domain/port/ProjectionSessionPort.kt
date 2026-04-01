@@ -26,6 +26,8 @@ interface ProjectionSessionPort {
 
     fun requestReconnect()
 
+    fun debugSimulateVehicleSleepCycle()
+
     fun refreshRuntimeSettings()
 
     fun previewRuntimeSettings(settings: ProjectionDeviceSettings)

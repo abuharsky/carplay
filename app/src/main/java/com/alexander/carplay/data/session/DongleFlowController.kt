@@ -7,12 +7,17 @@ import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionProtocolPhase
 
 class DongleFlowController(
-    private val logStore: DiagnosticLogStore,
+    private val logInfo: (source: String, message: String) -> Unit,
     private val delegate: Delegate,
 ) {
     companion object {
         private const val SOURCE = "Flow"
     }
+
+    constructor(
+        logStore: DiagnosticLogStore,
+        delegate: Delegate,
+    ) : this(logStore::info, delegate)
 
     private var firstVideoPacketSeen = false
     private var phase = ProjectionProtocolPhase.NONE
@@ -65,11 +70,11 @@ class DongleFlowController(
         message: String,
     ) {
         if (phase == newPhase) return
-        logStore.info(SOURCE, "Phase ${phase.name} -> ${newPhase.name}: $message")
+        logInfo(SOURCE, "Phase ${phase.name} -> ${newPhase.name}: $message")
         phase = newPhase
     }
 
-    private fun isWifiSessionEstablished(): Boolean {
+    private fun isSessionSetupEstablished(): Boolean {
         return phase == ProjectionProtocolPhase.CARPLAY_SESSION_SETUP ||
             phase == ProjectionProtocolPhase.AIRPLAY_NEGOTIATING ||
             phase == ProjectionProtocolPhase.STREAMING_ACTIVE ||
@@ -82,19 +87,25 @@ class DongleFlowController(
             phase == ProjectionProtocolPhase.WAITING_RETRY
     }
 
+    private fun shouldIgnoreDiscoveryCommand(commandName: String): Boolean {
+        if (!isSessionSetupEstablished()) return false
+        logInfo(SOURCE, "Ignoring $commandName after Plugged/session setup")
+        return true
+    }
+
     fun onSessionReady(
         config: ProjectionSessionConfig,
         includeBrandingAssets: Boolean,
     ) {
         firstVideoPacketSeen = false
         phase = ProjectionProtocolPhase.NONE
-        logStore.info(
+        logInfo(
             SOURCE,
             "Queueing init sequence: ${config.width}x${config.height}@${config.fps} safeArea=${config.carplaySafeAreaBottomDp}dp dpi=${config.dpi} " +
                 "name=${config.boxName} mic=${if (config.useAdapterMic) "adapter" else "phone"} " +
                 "audio=${if (config.useBluetoothAudio) "car_bt" else "adapter_usb"}",
         )
-        logStore.info(
+        logInfo(
             SOURCE,
             "Advanced adapter features require firmware flags: DashboardInfo=7, GNSSCapability=1/3, HudGPSSwitch=1, AdvancedFeatures=1",
         )
@@ -141,7 +152,7 @@ class DongleFlowController(
                 protocolPhase = ProjectionProtocolPhase.INIT_ECHO,
                 message = "Adapter ready. Scanning and waiting for iPhone",
             )
-            logStore.info(SOURCE, "Opened -> startBleAdv + startAutoConnect")
+            logInfo(SOURCE, "Opened -> startBleAdv + startAutoConnect")
         } else if (delegate.hasKnownDevices()) {
             delegate.clearAutoConnectPending()
             delegate.startBleAdvertising("multiple known devices available; waiting for manual selection")
@@ -150,7 +161,7 @@ class DongleFlowController(
                 protocolPhase = ProjectionProtocolPhase.INIT_ECHO,
                 message = "Adapter ready. Select iPhone to connect",
             )
-            logStore.info(SOURCE, "Opened -> manual device selection required")
+            logInfo(SOURCE, "Opened -> manual device selection required")
         } else {
             delegate.clearAutoConnectPending()
             delegate.startBleAdvertising("no paired devices known after init echo")
@@ -159,7 +170,7 @@ class DongleFlowController(
                 protocolPhase = ProjectionProtocolPhase.INIT_ECHO,
                 message = "Adapter ready. BLE pairing mode active",
             )
-            logStore.info(SOURCE, "Opened -> startBleAdv")
+            logInfo(SOURCE, "Opened -> startBleAdv")
         }
     }
 
@@ -175,14 +186,14 @@ class DongleFlowController(
             message = "CarPlay linked. Finishing stream negotiation",
             phoneDescription = Cpc200Protocol.describePhoneType(info.phoneType),
         )
-        logStore.info(SOURCE, "Plugged -> requestKeyFrame + frame timer")
+        logInfo(SOURCE, "Plugged -> requestKeyFrame + frame timer")
     }
 
     fun onPhase(phase: Int) {
         when (phase) {
             7 -> {
-                if (isWifiSessionEstablished()) {
-                    logStore.info(SOURCE, "Ignoring phase 7 after Wi-Fi session already established")
+                if (isSessionSetupEstablished()) {
+                    logInfo(SOURCE, "Ignoring phase 7 after Plugged/session setup")
                     return
                 }
                 delegate.clearAutoConnectPending()
@@ -246,7 +257,7 @@ class DongleFlowController(
             protocolPhase = ProjectionProtocolPhase.STREAMING_ACTIVE,
             message = "First video packet received: ${width}x$height",
         )
-        logStore.info(SOURCE, "First video packet -> STREAMING ${width}x$height")
+        logInfo(SOURCE, "First video packet -> STREAMING ${width}x$height")
     }
 
     fun onUnplugged() {
@@ -264,15 +275,16 @@ class DongleFlowController(
     fun onCommand(commandId: Int) {
         when (commandId) {
             Cpc200Protocol.Command.REQUEST_HOST_UI -> {
-                logStore.info(SOURCE, "Adapter requested host UI")
+                logInfo(SOURCE, "Adapter requested host UI")
                 delegate.requestHostUi()
             }
 
             Cpc200Protocol.Command.HIDE -> {
-                logStore.info(SOURCE, "Phone requested projection hide")
+                logInfo(SOURCE, "Phone requested projection hide")
             }
 
             Cpc200Protocol.Command.SCANNING_DEVICE -> {
+                if (shouldIgnoreDiscoveryCommand("scanningDevice")) return
                 transitionTo(ProjectionProtocolPhase.PHONE_SEARCH, "Adapter scanning for known devices")
                 delegate.updateState(
                     state = ProjectionConnectionState.CONNECTING,
@@ -282,6 +294,7 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.DEVICE_FOUND -> {
+                if (shouldIgnoreDiscoveryCommand("deviceFound")) return
                 delegate.clearAutoConnectPending()
                 transitionTo(ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED, "Known device found")
                 delegate.updateState(
@@ -292,8 +305,8 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.CONNECT_DEVICE_FAILED -> {
-                if (isWifiSessionEstablished() || !isDiscoveryPhaseActive()) {
-                    logStore.info(SOURCE, "Ignoring connectDeviceFailed after Wi-Fi session setup")
+                if (isSessionSetupEstablished() || !isDiscoveryPhaseActive()) {
+                    logInfo(SOURCE, "Ignoring connectDeviceFailed after Plugged/session setup")
                     return
                 }
                 firstVideoPacketSeen = false
@@ -308,6 +321,7 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.BT_CONNECTED -> {
+                if (shouldIgnoreDiscoveryCommand("btConnected")) return
                 delegate.clearAutoConnectPending()
                 delegate.stopBleAdvertising()
                 transitionTo(ProjectionProtocolPhase.PHONE_FOUND_BT_CONNECTED, "Bluetooth connected")
@@ -319,16 +333,16 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.BT_DISCONNECTED -> {
-                if (isWifiSessionEstablished()) {
+                if (isSessionSetupEstablished()) {
                     return
                 }
 
                 if (!isDiscoveryPhaseActive()) {
-                    logStore.info(SOURCE, "Ignoring btDisconnected before discovery started")
+                    logInfo(SOURCE, "Ignoring btDisconnected before discovery started")
                     return
                 }
 
-                if (!isWifiSessionEstablished()) {
+                if (!isSessionSetupEstablished()) {
                     firstVideoPacketSeen = false
                     delegate.stopFrameRequests()
                     beginDiscovery("bluetooth disconnected")
@@ -342,13 +356,14 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.WIFI_CONNECTED -> {
-                logStore.info(
+                logInfo(
                     SOURCE,
                     "Ignoring informational wifiConnected until Plugged/Phase 7 establishes session setup",
                 )
             }
 
             Cpc200Protocol.Command.BT_PAIR_START -> {
+                if (shouldIgnoreDiscoveryCommand("btPairStart")) return
                 delegate.updateState(
                     state = ProjectionConnectionState.CONNECTING,
                     protocolPhase = ProjectionProtocolPhase.PHONE_SEARCH,
@@ -357,8 +372,8 @@ class DongleFlowController(
             }
 
             Cpc200Protocol.Command.DEVICE_NOT_FOUND -> {
-                if (isWifiSessionEstablished() || !isDiscoveryPhaseActive()) {
-                    logStore.info(SOURCE, "Ignoring deviceNotFound after Wi-Fi session setup")
+                if (isSessionSetupEstablished() || !isDiscoveryPhaseActive()) {
+                    logInfo(SOURCE, "Ignoring deviceNotFound after Plugged/session setup")
                     return
                 }
                 firstVideoPacketSeen = false
@@ -421,9 +436,9 @@ class DongleFlowController(
             Cpc200Protocol.icon120(config)?.let { add(it) }
             Cpc200Protocol.icon180(config)?.let { add(it) }
             Cpc200Protocol.icon256(config)?.let { add(it) }
-            logStore.info(SOURCE, "Queueing OEM branding: ${config.oemBranding.label} name=${config.oemBranding.name}")
+            logInfo(SOURCE, "Queueing OEM branding: ${config.oemBranding.label} name=${config.oemBranding.name}")
         } else {
-            logStore.info(SOURCE, "Skipping OEM branding assets for reconnect init")
+            logInfo(SOURCE, "Skipping OEM branding assets for reconnect init")
         }
         add(Cpc200Protocol.boxSettings(config))
         add(Cpc200Protocol.airplayConfig(config))

@@ -15,6 +15,7 @@ import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
 import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
+import com.alexander.carplay.domain.usecase.DebugSimulateVehicleSleepCycleUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionAdapterNameUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionAutoConnectUseCase
@@ -84,6 +85,7 @@ class CarPlayViewModel(
     private val bindProjectionUiUseCase: BindProjectionUiUseCase,
     private val unbindProjectionUiUseCase: UnbindProjectionUiUseCase,
     private val requestProjectionReconnectUseCase: RequestProjectionReconnectUseCase,
+    private val debugSimulateVehicleSleepCycleUseCase: DebugSimulateVehicleSleepCycleUseCase,
     private val refreshProjectionRuntimeSettingsUseCase: RefreshProjectionRuntimeSettingsUseCase,
     private val previewProjectionRuntimeSettingsUseCase: PreviewProjectionRuntimeSettingsUseCase,
     private val setProjectionVideoStreamEnabledUseCase: SetProjectionVideoStreamEnabledUseCase,
@@ -241,6 +243,10 @@ class CarPlayViewModel(
 
     fun requestReconnect() {
         requestProjectionReconnectUseCase()
+    }
+
+    fun debugSimulateVehicleSleepCycle() {
+        debugSimulateVehicleSleepCycleUseCase()
     }
 
     fun previewDeviceSettings(settings: ProjectionDeviceSettings) {

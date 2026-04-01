@@ -1,6 +1,9 @@
 package com.alexander.carplay.platform.service
 
 import android.app.Service
+import android.bluetooth.BluetoothA2dp
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothProfile
 import android.content.ComponentCallbacks2
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -9,6 +12,7 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -45,6 +49,61 @@ class DongleService : Service() {
     private lateinit var wakeLockController: ServiceWakeLockController
     private val binder = ServiceBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private val audioStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(
+            context: Context,
+            intent: Intent,
+        ) {
+            when (intent.action) {
+                BluetoothA2dp.ACTION_PLAYING_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
+                    val prevState = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1)
+                    val device = extractBluetoothDevice(intent)
+                    val deviceDesc = runCatching { device?.name }.getOrNull() ?: device?.address ?: "unknown"
+                    logStore.info(
+                        "AudioSys",
+                        "A2DP playing: ${describeA2dpPlayState(prevState)} → ${describeA2dpPlayState(state)} device=$deviceDesc",
+                    )
+                }
+                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
+                    val prevState = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1)
+                    val device = extractBluetoothDevice(intent)
+                    val deviceDesc = runCatching { device?.name }.getOrNull() ?: device?.address ?: "unknown"
+                    logStore.info(
+                        "AudioSys",
+                        "A2DP connection: ${describeBtProfileState(prevState)} → ${describeBtProfileState(state)} device=$deviceDesc",
+                    )
+                }
+                AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
+                    logStore.info("AudioSys", "Audio becoming noisy (Bluetooth audio disconnected or headphones unplugged)")
+                }
+            }
+        }
+
+        private fun extractBluetoothDevice(intent: Intent): BluetoothDevice? =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            }
+
+        private fun describeA2dpPlayState(state: Int): String = when (state) {
+            BluetoothA2dp.STATE_PLAYING -> "PLAYING"
+            BluetoothA2dp.STATE_NOT_PLAYING -> "NOT_PLAYING"
+            else -> "UNKNOWN($state)"
+        }
+
+        private fun describeBtProfileState(state: Int): String = when (state) {
+            BluetoothProfile.STATE_CONNECTED -> "CONNECTED"
+            BluetoothProfile.STATE_CONNECTING -> "CONNECTING"
+            BluetoothProfile.STATE_DISCONNECTED -> "DISCONNECTED"
+            BluetoothProfile.STATE_DISCONNECTING -> "DISCONNECTING"
+            else -> "UNKNOWN($state)"
+        }
+    }
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(
@@ -104,6 +163,7 @@ class DongleService : Service() {
             )
         }
         registerUsbReceiver()
+        registerAudioStateReceiver()
         serviceScope.launch {
             sessionManager.state.collect { snapshot ->
                 wakeLockController.setActive(
@@ -198,6 +258,7 @@ class DongleService : Service() {
         super.onDestroy()
         logStore.info(SOURCE, "onDestroy | ${ProcessDiagnostics.describeCurrentProcess()}")
         unregisterReceiver(usbReceiver)
+        unregisterReceiver(audioStateReceiver)
         wakeLockController.release("service destroyed")
         serviceScope.cancel()
         sessionManager.shutdown()
@@ -215,6 +276,20 @@ class DongleService : Service() {
         } else {
             @Suppress("DEPRECATION")
             registerReceiver(usbReceiver, filter)
+        }
+    }
+
+    private fun registerAudioStateReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(BluetoothA2dp.ACTION_PLAYING_STATE_CHANGED)
+            addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+            addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(audioStateReceiver, filter, RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(audioStateReceiver, filter)
         }
     }
 
@@ -242,6 +317,10 @@ class DongleService : Service() {
 
         fun requestReconnect() {
             sessionManager.requestReconnect()
+        }
+
+        fun debugSimulateVehicleSleepCycle() {
+            sessionManager.debugSimulateVehicleSleepCycle()
         }
 
         fun refreshRuntimeSettings() {

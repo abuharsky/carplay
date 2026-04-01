@@ -29,6 +29,8 @@ class DongleServiceSessionPort(
 
     override fun requestReconnect() = connector.requestReconnect()
 
+    override fun debugSimulateVehicleSleepCycle() = connector.debugSimulateVehicleSleepCycle()
+
     override fun refreshRuntimeSettings() = connector.refreshRuntimeSettings()
 
     override fun previewRuntimeSettings(settings: ProjectionDeviceSettings) =

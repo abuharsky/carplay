@@ -12,6 +12,7 @@ import com.alexander.carplay.domain.port.ProjectionSettingsPort
 import com.alexander.carplay.domain.usecase.AttachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.BindProjectionUiUseCase
 import com.alexander.carplay.domain.usecase.CancelProjectionDeviceConnectionUseCase
+import com.alexander.carplay.domain.usecase.DebugSimulateVehicleSleepCycleUseCase
 import com.alexander.carplay.domain.usecase.DetachProjectionSurfaceUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionAdapterNameUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionAutoConnectUseCase
@@ -78,6 +79,7 @@ class AppContainer(application: Application) {
     val bindProjectionUiUseCase = BindProjectionUiUseCase(sessionPort)
     val unbindProjectionUiUseCase = UnbindProjectionUiUseCase(sessionPort)
     val requestProjectionReconnectUseCase = RequestProjectionReconnectUseCase(sessionPort)
+    val debugSimulateVehicleSleepCycleUseCase = DebugSimulateVehicleSleepCycleUseCase(sessionPort)
     val refreshProjectionRuntimeSettingsUseCase = RefreshProjectionRuntimeSettingsUseCase(sessionPort)
     val previewProjectionRuntimeSettingsUseCase = PreviewProjectionRuntimeSettingsUseCase(sessionPort)
     val setProjectionVideoStreamEnabledUseCase = SetProjectionVideoStreamEnabledUseCase(sessionPort)

@@ -64,6 +64,12 @@ class RequestProjectionReconnectUseCase(
     operator fun invoke() = sessionPort.requestReconnect()
 }
 
+class DebugSimulateVehicleSleepCycleUseCase(
+    private val sessionPort: ProjectionSessionPort,
+) {
+    operator fun invoke() = sessionPort.debugSimulateVehicleSleepCycle()
+}
+
 class RefreshProjectionRuntimeSettingsUseCase(
     private val sessionPort: ProjectionSessionPort,
 ) {
