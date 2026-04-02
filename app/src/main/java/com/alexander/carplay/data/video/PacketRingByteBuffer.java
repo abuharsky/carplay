@@ -152,9 +152,10 @@ public class PacketRingByteBuffer {
             } else {
                 newLength = proposedSize;
             }
-            log("Ring buffer resize to " + newLength + " bytes, attempt " + resizeAttemptCount);
+            log("Ring buffer resize to " + newLength + " bytes, attempt " + resizeAttemptCount + ", packets=" + packetCount);
         }
 
+        long reorganizeStart = System.currentTimeMillis();
         byte[] newBuffer = new byte[newLength];
         if (writePosition < readPosition) {
             int dataAtEndLength = lastWritePositionBeforeEnd - readPosition;
@@ -181,6 +182,10 @@ public class PacketRingByteBuffer {
         }
 
         buffer = newBuffer;
+        long reorganizeMs = System.currentTimeMillis() - reorganizeStart;
+        if (reorganizeMs > 5) {
+            log("Ring buffer reorganize took " + reorganizeMs + "ms, size=" + newLength + " bytes");
+        }
     }
 
     private int availableSpaceAtHead() {

@@ -33,6 +33,8 @@ class H264Renderer(
     private val availableInputBufferIndexes = ArrayDeque<Int>()
     private val presentationTimeUs = AtomicLong(0L)
     private val frameDurationUs = AtomicLong(DEFAULT_FRAME_DURATION_US)
+    private val lastFrameReceivedAtMs = AtomicLong(0L)
+    private val framesDeliveredToCodec = AtomicLong(0L)
 
     @Volatile
     private var currentSurface: Surface? = null
@@ -116,6 +118,14 @@ class H264Renderer(
         skipBytes: Int,
         callback: PacketRingByteBuffer.DirectWriteCallback,
     ) {
+        val now = System.currentTimeMillis()
+        val prev = lastFrameReceivedAtMs.getAndSet(now)
+        if (prev > 0) {
+            val gapMs = now - prev
+            if (gapMs > 200) {
+                logStore.info(SOURCE, "Frame gap: ${gapMs}ms (ringQueue=${ringBuffer.availablePacketsToRead()})")
+            }
+        }
         ringBuffer.directWriteToBuffer(length, skipBytes, callback)
         executors.codecInput.execute { drainCodecInputBuffers() }
     }
@@ -252,6 +262,10 @@ class H264Renderer(
             index: Int,
             info: MediaCodec.BufferInfo,
         ) {
+            val rendered = framesDeliveredToCodec.incrementAndGet()
+            if (rendered % 300 == 0L) {
+                logStore.info(SOURCE, "Frames rendered: $rendered total")
+            }
             executors.codecOutput.execute {
                 try {
                     codec.releaseOutputBuffer(index, info.size > 0)
@@ -284,6 +298,10 @@ class H264Renderer(
             }
 
             val targetCodec = codec ?: return
+            val queueDepthAtDrainStart = ringBuffer.availablePacketsToRead()
+            if (queueDepthAtDrainStart > 10) {
+                logStore.info(SOURCE, "Drain start: ringQueue=$queueDepthAtDrainStart inputSlots=${availableInputBufferIndexes.size}")
+            }
             while (availableInputBufferIndexes.isNotEmpty() && ringBuffer.availablePacketsToRead() > 0) {
                 val inputBufferIndex = availableInputBufferIndexes.removeFirst()
                 val packet = ringBuffer.readPacket()
