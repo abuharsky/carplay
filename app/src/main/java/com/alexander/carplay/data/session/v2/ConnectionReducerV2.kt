@@ -170,6 +170,7 @@ object ConnectionReducerV2 {
                 ReductionResultV2(
                     snapshot = snapshot,
                     effects = armingDiscoveryEffects(
+                        discoveryState = snapshot.discovery.state,
                         selectionMode = selectionMode,
                         knownDeviceCount = event.knownDeviceCount,
                         openAcknowledged = previous.transport.openAcknowledged,
@@ -217,6 +218,7 @@ object ConnectionReducerV2 {
                         emptyList()
                     } else {
                         armingDiscoveryEffects(
+                            discoveryState = updatedDiscovery.state,
                             selectionMode = previous.policy.selectionMode,
                             knownDeviceCount = previous.policy.knownDeviceCount,
                             openAcknowledged = true,
@@ -473,12 +475,21 @@ object ConnectionReducerV2 {
     }
 
     private fun armingDiscoveryEffects(
+        discoveryState: DiscoveryStateV2,
         selectionMode: SelectionModeV2,
         knownDeviceCount: Int,
         openAcknowledged: Boolean,
         sessionEstablished: Boolean,
     ): List<ConnectionEffectV2> {
         if (!openAcknowledged || sessionEstablished) return emptyList()
+        if (
+            discoveryState == DiscoveryStateV2.DEVICE_FOUND ||
+            discoveryState == DiscoveryStateV2.BT_CONNECTING ||
+            discoveryState == DiscoveryStateV2.BT_CONNECTED ||
+            discoveryState == DiscoveryStateV2.RETRYING
+        ) {
+            return emptyList()
+        }
         return buildList {
             add(ConnectionEffectV2.StartBleAdvertising)
             if (selectionMode == SelectionModeV2.AUTO && knownDeviceCount > 0) {

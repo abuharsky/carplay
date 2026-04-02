@@ -37,6 +37,7 @@ object Cpc200Protocol {
         const val WIFI_DEVICE_NAME = 0x0E
         const val DISCONNECT_PHONE = 0x0F
         const val BT_PAIRED_LIST = 0x12
+        const val BLUETOOTH_ONLINE_LIST = 0x13
         const val MANUFACTURER_INFO = 0x14
         const val CLOSE_DONGLE = 0x15
         const val MULTI_TOUCH = 0x17
@@ -551,6 +552,7 @@ object Cpc200Protocol {
         MessageType.WIFI_DEVICE_NAME -> "WifiDeviceName"
         MessageType.DISCONNECT_PHONE -> "DisconnectPhone"
         MessageType.BT_PAIRED_LIST -> "BluetoothPairedList"
+        MessageType.BLUETOOTH_ONLINE_LIST -> "BluetoothOnlineList"
         MessageType.MANUFACTURER_INFO -> "ManufacturerInfo"
         MessageType.CLOSE_DONGLE -> "CloseDongle"
         MessageType.MULTI_TOUCH -> "MultiTouch"

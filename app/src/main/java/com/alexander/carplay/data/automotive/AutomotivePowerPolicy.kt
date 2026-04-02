@@ -1,5 +1,6 @@
 package com.alexander.carplay.data.automotive
 
+import com.alexander.carplay.BuildConfig
 import com.incall.serversdk.power.PowerConstant
 
 data class AutomotivePowerSnapshot(
@@ -14,6 +15,7 @@ data class AutomotivePowerSnapshot(
 
 object AutomotivePowerPolicy {
     fun isReadyForAutoConnect(snapshot: AutomotivePowerSnapshot): Boolean {
+        if (BuildConfig.DEBUG) return true
         return isIgnitionOnForAutoConnect(snapshot)
     }
 
@@ -22,6 +24,7 @@ object AutomotivePowerPolicy {
     }
 
     fun isVehicleActive(snapshot: AutomotivePowerSnapshot): Boolean {
+        if (BuildConfig.DEBUG) return true
         snapshot.accState?.let { accState ->
             return accState == PowerConstant.ACC_ON || accState == PowerConstant.ACC_START
         }

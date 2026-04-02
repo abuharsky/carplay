@@ -7,7 +7,6 @@ import android.content.ComponentCallbacks2
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.Surface
-import com.alexander.carplay.BuildConfig
 import com.alexander.carplay.data.automotive.AutomotivePowerMonitor
 import com.alexander.carplay.data.automotive.AutomotivePowerPolicy
 import com.alexander.carplay.data.automotive.AutomotivePowerSnapshot
@@ -36,6 +35,7 @@ import com.alexander.carplay.data.usb.AndroidUsbTransport
 import com.alexander.carplay.data.usb.DongleConnectionSession
 import com.alexander.carplay.data.usb.UsbTransport
 import com.alexander.carplay.data.video.H264Renderer
+import com.alexander.carplay.domain.model.NowPlayingSnapshot
 import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionDeviceSnapshot
@@ -46,6 +46,7 @@ import com.alexander.carplay.domain.model.ProjectionUiEvent
 import com.alexander.carplay.domain.port.ProjectionSettingsPort
 import com.alexander.carplay.presentation.ui.CarPlayActivity
 import com.alexander.carplay.presentation.ui.ProjectionFrameSnapshotStore
+import com.alexander.carplay.BuildConfig
 import com.incall.serversdk.power.PowerConstant
 import java.io.File
 import java.nio.ByteBuffer
@@ -59,6 +60,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.random.Random
 
 class DongleSessionManager(
@@ -94,6 +97,22 @@ class DongleSessionManager(
         var unpluggedAtMs: Long? = null,
     )
 
+    private data class MediaMetadataLogSnapshot(
+        val appName: String?,
+        val songName: String?,
+        val artistName: String?,
+        val playStatus: Int?,
+        val playTime: Int?,
+        val duration: Int?,
+    ) {
+        fun hasSameIdentity(other: MediaMetadataLogSnapshot): Boolean {
+            return appName == other.appName &&
+                songName == other.songName &&
+                artistName == other.artistName &&
+                duration == other.duration
+        }
+    }
+
     companion object {
         private const val SOURCE = "Session"
         private const val READ_TIMEOUT_MS = 1_000
@@ -101,6 +120,7 @@ class DongleSessionManager(
         private const val RECONNECT_DELAY_MS = 2_000L
         private const val SLEEP_DISCONNECT_GRACE_MS = 1_500L
         private const val MANUAL_VEHICLE_GATE_BYPASS_WINDOW_MS = 120_000L
+        private const val BLUETOOTH_ONLINE_LIST_REQUEST_MIN_INTERVAL_MS = 1_000L
         private const val USB_OPEN_STABILIZATION_DELAY_MS = 3_000L
         private const val USB_POST_OPEN_STABILIZATION_DELAY_MS = 250L
         private const val OPEN_ACK_TIMEOUT_MS = 6_000L
@@ -140,6 +160,8 @@ class DongleSessionManager(
     private val outboundQueue = LinkedBlockingQueue<ByteArray>()
     private val knownDevices = linkedMapOf<String, DongleKnownDevice>()
     private val availableDeviceIds = linkedSetOf<String>()
+    private var availableDevicesKnown = false
+    private var bluetoothOnlineListFallbackAllowed = false
     private val _state = MutableStateFlow(ProjectionSessionSnapshot())
     private val _events = MutableSharedFlow<ProjectionUiEvent>(extraBufferCapacity = 8)
     private val connectionEngineV2 = ConnectionEngineV2(logStore::info)
@@ -185,6 +207,7 @@ class DongleSessionManager(
     private var lastUsbConnectRequestedAtMs = 0L
     private var lastUsbSessionOpenedAtMs = 0L
     private var lastOpenAckAtMs = 0L
+    private var lastBluetoothOnlineListRequestAtMs = 0L
     private var writeLoopStarted = false
     private var videoStreamEnabled = false
     private var backgroundVideoDropLogged = false
@@ -197,9 +220,13 @@ class DongleSessionManager(
     private var activeConnectAttempt: ConnectAttemptTrace? = null
     private var restoreActivityAfterSleep = false
     private var activityVisible = false
+    private var lastMediaMetadataLogSnapshot: MediaMetadataLogSnapshot? = null
 
     val state: StateFlow<ProjectionSessionSnapshot> = _state.asStateFlow()
     val events: SharedFlow<ProjectionUiEvent> = _events.asSharedFlow()
+
+    private val _nowPlaying = MutableStateFlow<NowPlayingSnapshot?>(null)
+    val nowPlaying: StateFlow<NowPlayingSnapshot?> = _nowPlaying.asStateFlow()
 
     init {
         automotivePowerMonitor.start()
@@ -1672,6 +1699,9 @@ class DongleSessionManager(
         pendingDeviceSelectionSent = false
         knownDevices.clear()
         availableDeviceIds.clear()
+        availableDevicesKnown = false
+        bluetoothOnlineListFallbackAllowed = false
+        lastBluetoothOnlineListRequestAtMs = 0L
         outboundQueue.clear()
         clearAutoConnectPending()
         bleAdvertisingActive = false
@@ -1679,6 +1709,7 @@ class DongleSessionManager(
         lastInboundActivityAtMs = 0L
         lastHeartbeatEchoAtMs = 0L
         backgroundVideoDropLogged = false
+        lastMediaMetadataLogSnapshot = null
         microphoneInputManager.stop("projection runtime reset: $reason")
         audioStreamManager.release()
         audioStreamManager.updateDeviceSettings(null)
@@ -1718,15 +1749,24 @@ class DongleSessionManager(
         devices.forEach(::rememberKnownDevice)
     }
 
-    private fun refreshAvailableDevices(devices: List<DongleKnownDevice>) {
+    private fun refreshAvailableDeviceIds(deviceIds: Collection<String>) {
         availableDeviceIds.clear()
-        devices.forEach { device ->
-            val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(device.id)
+        availableDevicesKnown = true
+        bluetoothOnlineListFallbackAllowed = false
+        deviceIds.forEach { deviceId ->
+            val normalizedId = Cpc200Protocol.normalizeDeviceIdentifier(deviceId)
             if (normalizedId.isNotBlank()) {
                 availableDeviceIds += normalizedId
             }
         }
     }
+
+    private fun clearAvailableDeviceIdsKnowledge() {
+        availableDeviceIds.clear()
+        availableDevicesKnown = false
+    }
+
+    private fun availableDeviceCountOrNull(): Int? = if (availableDevicesKnown) availableDeviceIds.size else null
 
     private fun effectiveKnownDeviceCount(): Int {
         if (availableDeviceIds.isNotEmpty()) return availableDeviceIds.size
@@ -1737,7 +1777,8 @@ class DongleSessionManager(
     private fun requiresManualDeviceSelection(): Boolean {
         if (!settingsStore.isAutoConnectEnabled()) return knownDevices.isNotEmpty()
         if (pendingConnectionDeviceId != null) return false
-        return effectiveKnownDeviceCount() > 1
+        val availableDeviceCount = availableDeviceCountOrNull()
+        return if (availableDeviceCount != null) availableDeviceCount > 1 else false
     }
 
     private fun shouldAutoConnectKnownDevices(): Boolean {
@@ -1746,7 +1787,20 @@ class DongleSessionManager(
         if (!hasKnown) return false
         if (!AutomotivePowerPolicy.isReadyForAutoConnect(automotivePowerSnapshot)) return false
         if (pendingConnectionDeviceId != null) return true
-        return !requiresManualDeviceSelection()
+        val availableDeviceCount = availableDeviceCountOrNull()
+        if (availableDeviceCount != null) return availableDeviceCount == 1
+        if (bluetoothOnlineListFallbackAllowed && settingsStore.getLastConnectedDeviceId() != null) {
+            return true
+        }
+        return effectiveKnownDeviceCount() <= 1
+    }
+
+    private fun singleAvailableDeviceId(): String? {
+        return if (availableDevicesKnown && availableDeviceIds.size == 1) {
+            availableDeviceIds.firstOrNull()
+        } else {
+            null
+        }
     }
 
     private fun buildSessionConfig(): ProjectionSessionConfig {
@@ -1761,6 +1815,7 @@ class DongleSessionManager(
             ?: currentPeerBluetoothDeviceId
             ?: currentSelectedDeviceId
             ?: catalogActiveDeviceId
+            ?: singleAvailableDeviceId()
             ?: settingsStore.getLastConnectedDeviceId()
         val deviceSettings = settingsStore.getSettings(preferredDeviceId)
         val resolvedConfig = baseConfig.copy(
@@ -1827,6 +1882,13 @@ class DongleSessionManager(
 
     private fun buildDeviceSnapshots(): List<ProjectionDeviceSnapshot> {
         val ordered = linkedMapOf<String, DongleKnownDevice>()
+        val selectedDeviceId = currentSelectedDeviceId
+            ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
+            ?.ifBlank { null }
+        val lastConnectedDeviceId = settingsStore.getLastConnectedDeviceId()
+            ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
+            ?.ifBlank { null }
+
         knownDevices.forEach { (id, device) ->
             ordered[id] = device.copy(id = id)
         }
@@ -1855,7 +1917,8 @@ class DongleSessionManager(
                     type = device.type,
                     isAvailable = normalizedId in availableDeviceIds,
                     isActive = normalizedId == currentSessionDeviceId,
-                    isSelected = normalizedId == currentSelectedDeviceId,
+                    isSelected = normalizedId == selectedDeviceId ||
+                        (selectedDeviceId == null && normalizedId == lastConnectedDeviceId),
                     isConnecting = normalizedId == pendingConnectionDeviceId || normalizedId == currentPeerBluetoothDeviceId,
                 )
             }
@@ -1928,6 +1991,17 @@ class DongleSessionManager(
         logStore.info(SOURCE, "AutoConnect_By_BluetoothAddress sent: ${describeKnownDevice(pendingId)}")
     }
 
+    private fun requestBluetoothOnlineList(reason: String) {
+        if (currentSession == null || !started || shuttingDown) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastBluetoothOnlineListRequestAtMs < BLUETOOTH_ONLINE_LIST_REQUEST_MIN_INTERVAL_MS) {
+            return
+        }
+        lastBluetoothOnlineListRequestAtMs = now
+        queueOutbound(Cpc200Protocol.command(Cpc200Protocol.Command.GET_BLUETOOTH_ONLINE_LIST))
+        logStore.info(SOURCE, "Requested BluetoothOnlineList: $reason")
+    }
+
     private fun rememberSessionDevice(deviceId: String?, reason: String) {
         val normalizedId = deviceId
             ?.let(Cpc200Protocol::normalizeDeviceIdentifier)
@@ -1945,10 +2019,12 @@ class DongleSessionManager(
             ?: currentPeerBluetoothDeviceId
             ?: currentSelectedDeviceId
             ?: catalogActiveDeviceId
+            ?: singleAvailableDeviceId()
             ?: settingsStore.getLastConnectedDeviceId()
     }
 
     private fun handleBoxSettingsMessage(payload: ByteArray) {
+        logFullBoxSettingsPayload(payload)
         val snapshot = DongleDeviceCatalogParser.parseBoxSettings(payload)
         if (snapshot == null) {
             logStore.info(SOURCE, "BoxSettings <- ${payload.toString(Charsets.UTF_8).take(180)}")
@@ -1956,9 +2032,6 @@ class DongleSessionManager(
         }
 
         rememberKnownDevices(snapshot.devices)
-        if (snapshot.devices.isNotEmpty()) {
-            refreshAvailableDevices(snapshot.devices)
-        }
         logBoxSettingsSnapshot(snapshot)
 
         if (snapshot.activeDeviceId != null) {
@@ -1980,7 +2053,148 @@ class DongleSessionManager(
                 currentPhoneType = null
             }
         }
+        if (snapshot.hasDeviceList) {
+            applyV2PolicyUpdated()
+        }
         refreshState()
+    }
+
+    private fun handleBluetoothOnlineListMessage(payload: ByteArray?) {
+        if (payload == null || payload.isEmpty()) {
+            logStore.info(SOURCE, "BluetoothOnlineList <- <empty>")
+            refreshAvailableDeviceIds(emptyList())
+            applyV2PolicyUpdated()
+            refreshState()
+            return
+        }
+
+        val rawHex = payload.joinToString(" ") { each -> "%02X".format(each.toInt() and 0xFF) }
+        logChunkedSessionMessage("BluetoothOnlineList.raw(hex,size=${payload.size}) <- $rawHex")
+
+        val rawText = payload.toString(Charsets.UTF_8).trim()
+        if (rawText.isNotEmpty() && isLikelyReadableBluetoothOnlineList(rawText)) {
+            logChunkedSessionMessage("BluetoothOnlineList.raw <- $rawText")
+        }
+
+        val onlineDeviceIds = parseBluetoothOnlineDeviceIds(payload)
+        if (onlineDeviceIds.isNotEmpty()) {
+            refreshAvailableDeviceIds(onlineDeviceIds)
+            val entries = onlineDeviceIds.joinToString(" | ") { describeKnownDevice(it) }
+            logStore.info(SOURCE, "BluetoothOnlineList.parsed(${onlineDeviceIds.size}): $entries")
+            applyV2PolicyUpdated()
+            refreshState()
+            return
+        }
+
+        val readablePayload = rawText.isNotEmpty() && isLikelyReadableBluetoothOnlineList(rawText)
+        if (!readablePayload) {
+            bluetoothOnlineListFallbackAllowed = true
+            clearAvailableDeviceIdsKnowledge()
+            logStore.info(
+                SOURCE,
+                "BluetoothOnlineList.parsed(?) ignored: non-empty payload is not text/MAC list; " +
+                    "keeping availability unknown and allowing last-connected fallback",
+            )
+        } else {
+            refreshAvailableDeviceIds(emptyList())
+            logStore.info(SOURCE, "BluetoothOnlineList.parsed(0): no online devices")
+        }
+        applyV2PolicyUpdated()
+        refreshState()
+    }
+
+    private fun parseBluetoothOnlineDeviceIds(payload: ByteArray): List<String> {
+        val text = payload.toString(Charsets.UTF_8)
+        val idsFromPattern = Regex("(?i)([0-9A-F]{2}(?::[0-9A-F]{2}){5})")
+            .findAll(text)
+            .map { it.groupValues[1] }
+            .map(Cpc200Protocol::normalizeDeviceIdentifier)
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
+        if (idsFromPattern.isNotEmpty()) return idsFromPattern
+
+        val idsFromBinaryScan = parseBluetoothOnlineDeviceIdsFromRawMacs(payload)
+        if (idsFromBinaryScan.isNotEmpty()) return idsFromBinaryScan
+
+        return runCatching { DongleDeviceCatalogParser.parsePairedList(payload) }
+            .getOrDefault(emptyList())
+            .map { Cpc200Protocol.normalizeDeviceIdentifier(it.id) }
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
+    private fun parseBluetoothOnlineDeviceIdsFromRawMacs(payload: ByteArray): List<String> {
+        if (payload.size < 6 || knownDevices.isEmpty()) return emptyList()
+
+        return knownDevices.keys
+            .mapNotNull { knownId ->
+                val rawMacBytes = knownId
+                    .split(':')
+                    .mapNotNull { part -> part.toIntOrNull(16)?.toByte() }
+                    .takeIf { it.size == 6 }
+                    ?.toByteArray()
+                    ?: return@mapNotNull null
+
+                if (payload.containsSubsequence(rawMacBytes)) knownId else null
+            }
+            .distinct()
+    }
+
+    private fun ByteArray.containsSubsequence(target: ByteArray): Boolean {
+        if (target.isEmpty() || size < target.size) return false
+        for (start in 0..(size - target.size)) {
+            var matched = true
+            for (offset in target.indices) {
+                if (this[start + offset] != target[offset]) {
+                    matched = false
+                    break
+                }
+            }
+            if (matched) return true
+        }
+        return false
+    }
+
+    private fun isLikelyReadableBluetoothOnlineList(text: String): Boolean {
+        if (text.isBlank()) return false
+        val printableChars = text.count { it == '\n' || it == '\r' || it == '\t' || it.code in 32..126 || it.code >= 0x0400 }
+        return printableChars * 100 / text.length >= 85
+    }
+
+    private fun logFullBoxSettingsPayload(payload: ByteArray) {
+        val rawText = payload.toString(Charsets.UTF_8).trim()
+        if (rawText.isBlank()) {
+            logStore.info(SOURCE, "BoxSettings.raw <- <empty>")
+            return
+        }
+
+        val json = runCatching { JSONObject(rawText) }.getOrNull()
+        if (json == null) {
+            logChunkedSessionMessage("BoxSettings.raw <- $rawText")
+            return
+        }
+
+        logChunkedSessionMessage("BoxSettings.raw <- ${json.toString()}")
+
+        val keys = json.keys().asSequence().toList().sorted()
+        logStore.info(SOURCE, "BoxSettings.keys <- [${keys.joinToString(",")}]")
+
+        keys
+            .filter { it != "DevList" }
+            .forEach { key ->
+                logChunkedSessionMessage(
+                    "BoxSettings.field[$key] <- ${jsonValueToLogString(json.opt(key))}",
+                )
+            }
+
+        val devList = json.optJSONArray("DevList") ?: return
+        logStore.info(SOURCE, "BoxSettings.DevList.raw count=${devList.length()}")
+        for (index in 0 until devList.length()) {
+            logChunkedSessionMessage(
+                "BoxSettings.DevList.raw[$index] <- ${jsonValueToLogString(devList.opt(index))}",
+            )
+        }
     }
 
     private fun logBoxSettingsSnapshot(snapshot: DongleBoxSettingsSnapshot) {
@@ -1996,6 +2210,33 @@ class DongleSessionManager(
             logStore.info(
                 SOURCE,
                 "BoxSettings active link: linkType=$linkType btName=$activeName ${describeKnownDevice(activeId)}",
+            )
+        }
+    }
+
+    private fun jsonValueToLogString(value: Any?): String {
+        return when (value) {
+            null, JSONObject.NULL -> "null"
+            is JSONObject -> value.toString()
+            is JSONArray -> value.toString()
+            is String -> JSONObject.quote(value)
+            else -> value.toString()
+        }
+    }
+
+    private fun logChunkedSessionMessage(
+        message: String,
+        chunkSize: Int = 3000,
+    ) {
+        if (message.length <= chunkSize) {
+            logStore.info(SOURCE, message)
+            return
+        }
+        val parts = message.chunked(chunkSize)
+        parts.forEachIndexed { index, part ->
+            logStore.info(
+                SOURCE,
+                "chunk ${index + 1}/${parts.size}: $part",
             )
         }
     }
@@ -2026,11 +2267,41 @@ class DongleSessionManager(
 
         when (mediaData) {
             is Cpc200Protocol.MediaDataPayload.Metadata -> {
-                val compactPayload = mediaData.rawJson
-                    .replace(Regex("\\s+"), " ")
-                    .take(500)
-                markInboundActivity("MediaData metadata")
-                logStore.info(SOURCE, "MediaData metadata <- $compactPayload")
+                val snapshot = buildMediaMetadataLogSnapshot(mediaData.json)
+                val logReason = describeMediaMetadataLogReason(
+                    previous = lastMediaMetadataLogSnapshot,
+                    current = snapshot,
+                )
+                lastMediaMetadataLogSnapshot = snapshot
+                _nowPlaying.value = NowPlayingSnapshot(
+                    songName = snapshot.songName,
+                    artistName = snapshot.artistName,
+                    albumName = mediaData.json.optString("MediaAlbumName").trim().takeIf { it.isNotEmpty() },
+                    playStatus = snapshot.playStatus,
+                    durationSeconds = snapshot.duration,
+                    playTimeSeconds = snapshot.playTime,
+                )
+                if (logReason != null) {
+                    markInboundActivity("MediaData metadata")
+                    if (
+                        logReason == "first" ||
+                        logReason == "track-change" ||
+                        snapshot.appName == null ||
+                        snapshot.songName == null
+                    ) {
+                        val compactPayload = mediaData.rawJson
+                            .replace(Regex("\\s+"), " ")
+                            .take(500)
+                        logStore.info(SOURCE, "MediaData metadata [$logReason] <- $compactPayload")
+                    }
+                    buildMediaMetadataSummary(snapshot)?.let { summary ->
+                        logStore.info(SOURCE, "MediaData summary [$logReason] <- $summary")
+                    }
+                    if (snapshot.appName == null || snapshot.songName == null) {
+                        val keys = mediaData.json.keys().asSequence().toList().sorted().joinToString(",")
+                        logStore.info(SOURCE, "MediaData sparse metadata [$logReason] keys=[$keys]")
+                    }
+                }
                 doubleMediaPublisher.onMediaMetadata(mediaData.json)
             }
 
@@ -2062,6 +2333,102 @@ class DongleSessionManager(
                 )
             }
         }
+    }
+
+    private fun buildMediaMetadataLogSnapshot(json: JSONObject): MediaMetadataLogSnapshot {
+        return MediaMetadataLogSnapshot(
+            appName = json.optString("MediaAPPName").trim().takeIf { it.isNotEmpty() },
+            songName = json.optString("MediaSongName").trim().takeIf { it.isNotEmpty() },
+            artistName = json.optString("MediaArtistName").trim().takeIf { it.isNotEmpty() },
+            playStatus = json.optIntOrNull("MediaPlayStatus"),
+            playTime = json.optIntOrNull("MediaSongPlayTime"),
+            duration = json.optIntOrNull("MediaSongDuration"),
+        )
+    }
+
+    private fun describeMediaMetadataLogReason(
+        previous: MediaMetadataLogSnapshot?,
+        current: MediaMetadataLogSnapshot,
+    ): String? {
+        return when {
+            previous == null -> "first"
+            !current.hasSameIdentity(previous) -> "track-change"
+            current.playStatus != previous.playStatus -> "status-change"
+            else -> null
+        }
+    }
+
+    private fun buildMediaMetadataSummary(snapshot: MediaMetadataLogSnapshot): String? {
+        val fields = buildList {
+            snapshot.appName?.let { add("app=$it") }
+            snapshot.songName?.let { add("song=$it") }
+            snapshot.artistName?.let { add("artist=$it") }
+            snapshot.playStatus?.let { add("playStatus=$it") }
+            snapshot.playTime?.let { add("playTime=$it") }
+            snapshot.duration?.let { add("duration=$it") }
+        }
+        return fields.takeIf { it.isNotEmpty() }?.joinToString(" ")
+    }
+
+    private fun describeCurrentNowPlayingForAudio(): String {
+        val metadata = lastMediaMetadataLogSnapshot
+        val nowPlaying = _nowPlaying.value
+        val fields = buildList {
+            metadata?.appName?.let { add("app=$it") }
+            nowPlaying?.songName?.let { add("song=$it") }
+            nowPlaying?.artistName?.let { add("artist=$it") }
+            nowPlaying?.playStatus?.let { add("playStatus=$it") }
+            nowPlaying?.playTimeSeconds?.let { add("playTime=$it") }
+            nowPlaying?.durationSeconds?.let { add("duration=$it") }
+        }
+        return fields.ifEmpty { listOf("none") }.joinToString(" ")
+    }
+
+    private fun describeAudioCommand(command: Int): String = when (command) {
+        Cpc200Protocol.AudioCommand.OUTPUT_START -> "outputStart"
+        Cpc200Protocol.AudioCommand.OUTPUT_STOP -> "outputStop"
+        Cpc200Protocol.AudioCommand.INPUT_CONFIG -> "inputConfig"
+        Cpc200Protocol.AudioCommand.PHONE_START -> "phoneStart"
+        Cpc200Protocol.AudioCommand.PHONE_STOP -> "phoneStop"
+        Cpc200Protocol.AudioCommand.PHONE_INCOMING -> "phoneIncoming"
+        Cpc200Protocol.AudioCommand.NAVI_START -> "naviStart"
+        Cpc200Protocol.AudioCommand.NAVI_STOP -> "naviStop"
+        Cpc200Protocol.AudioCommand.SIRI_START -> "siriStart"
+        Cpc200Protocol.AudioCommand.SIRI_STOP -> "siriStop"
+        Cpc200Protocol.AudioCommand.MEDIA_START -> "mediaStart"
+        Cpc200Protocol.AudioCommand.MEDIA_STOP -> "mediaStop"
+        Cpc200Protocol.AudioCommand.ALERT_START -> "alertStart"
+        Cpc200Protocol.AudioCommand.ALERT_STOP -> "alertStop"
+        else -> "unknown($command)"
+    }
+
+    private fun logAudioPacketCorrelation(audioPacket: Cpc200Protocol.AudioPacket) {
+        val snapshot = _state.value
+        val currentMedia = describeCurrentNowPlayingForAudio()
+        when {
+            audioPacket.command != null -> {
+                logStore.info(
+                    SOURCE,
+                    "Audio correlate command=${describeAudioCommand(audioPacket.command)} " +
+                        "key=${audioPacket.decodeType}/${audioPacket.audioType} " +
+                        "volume=${"%.2f".format(audioPacket.volume)} media={$currentMedia} " +
+                        "projection=${snapshot.state} phase=${snapshot.protocolPhase}",
+                )
+            }
+
+            audioPacket.volumeDuration != null -> {
+                logStore.info(
+                    SOURCE,
+                    "Audio correlate volume key=${audioPacket.decodeType}/${audioPacket.audioType} " +
+                        "gain=${"%.2f".format(audioPacket.volume)} duration=${"%.2f".format(audioPacket.volumeDuration)}s " +
+                        "media={$currentMedia}",
+                )
+            }
+        }
+    }
+
+    private fun JSONObject.optIntOrNull(key: String): Int? {
+        return if (has(key) && !isNull(key)) optInt(key) else null
     }
 
     private fun handleNaviVideoMessage(
@@ -2278,6 +2645,7 @@ class DongleSessionManager(
                         ),
                     )
                 }
+                requestBluetoothOnlineList("open acknowledged")
             }
 
             Cpc200Protocol.MessageType.PLUGGED -> {
@@ -2405,6 +2773,10 @@ class DongleSessionManager(
                 payload?.let(::handleBoxSettingsMessage)
             }
 
+            Cpc200Protocol.MessageType.BLUETOOTH_ONLINE_LIST -> {
+                handleBluetoothOnlineListMessage(payload)
+            }
+
             Cpc200Protocol.MessageType.AUTO_CONNECT_BY_BLUETOOTH_ADDRESS -> {
                 val safePayload = payload ?: return
                 val deviceId = Cpc200Protocol.parseDeviceIdentifier(safePayload)
@@ -2493,6 +2865,7 @@ class DongleSessionManager(
             Cpc200Protocol.MessageType.AUDIO -> {
                 val safePayload = payload ?: return
                 val audioPacket = Cpc200Protocol.parseAudioPacket(safePayload)
+                logAudioPacketCorrelation(audioPacket)
                 audioStreamManager.handleAudioPacket(audioPacket)
             }
         }
@@ -2830,6 +3203,7 @@ class DongleSessionManager(
     }
 
     private fun isVehicleGateOpen(): Boolean {
+        if (BuildConfig.DEBUG) return true
         return vehicleActive || isManualVehicleGateBypassActive()
     }
 

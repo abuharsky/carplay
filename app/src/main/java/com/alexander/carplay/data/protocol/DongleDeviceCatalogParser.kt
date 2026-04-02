@@ -11,6 +11,7 @@ data class DongleBoxSettingsSnapshot(
     val activeDeviceId: String? = null,
     val activeDeviceName: String? = null,
     val linkType: String? = null,
+    val hasDeviceList: Boolean = false,
     val devices: List<DongleKnownDevice> = emptyList(),
 )
 
@@ -47,7 +48,8 @@ object DongleDeviceCatalogParser {
         val text = payload.toString(Charsets.UTF_8).trim()
         if (text.isBlank()) return null
 
-        val devices = devListPattern.find(text)
+        val devListMatch = devListPattern.find(text)
+        val devices = devListMatch
             ?.groupValues
             ?.getOrNull(1)
             ?.let { devListBody ->
@@ -65,6 +67,7 @@ object DongleDeviceCatalogParser {
                 ?.ifBlank { null },
             activeDeviceName = extractString(text, "btName"),
             linkType = extractString(text, "MDLinkType"),
+            hasDeviceList = devListMatch != null,
             devices = devices,
         )
     }
