@@ -33,4 +33,20 @@ interface ProjectionSettingsPort {
         deviceId: String?,
         name: String?,
     )
+
+    fun isMediaSessionFixEnabled(): Boolean
+
+    fun setMediaSessionFixEnabled(enabled: Boolean)
+
+    fun isAudioFocusFixEnabled(): Boolean
+
+    fun setAudioFocusFixEnabled(enabled: Boolean)
+
+    fun isA2dpDisconnectFixEnabled(): Boolean
+
+    fun setA2dpDisconnectFixEnabled(enabled: Boolean)
+
+    fun isMediaSessionMetadataEnabled(): Boolean
+
+    fun setMediaSessionMetadataEnabled(enabled: Boolean)
 }

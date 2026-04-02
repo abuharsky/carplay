@@ -22,6 +22,14 @@ import com.alexander.carplay.domain.usecase.LoadProjectionAutoConnectUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionClimatePanelEnabledUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionCarPlaySafeAreaBottomUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionDeviceSettingsUseCase
+import com.alexander.carplay.domain.usecase.LoadMediaSessionFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveMediaSessionFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.LoadAudioFocusFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveAudioFocusFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.LoadA2dpDisconnectFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveA2dpDisconnectFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.LoadMediaSessionMetadataEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveMediaSessionMetadataEnabledUseCase
 import com.alexander.carplay.domain.usecase.ObserveDiagnosticLogsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionUiEventsUseCase
 import com.alexander.carplay.domain.usecase.ObserveProjectionStateUseCase
@@ -100,6 +108,14 @@ class CarPlayViewModel(
     private val saveProjectionClimatePanelEnabledUseCase: SaveProjectionClimatePanelEnabledUseCase,
     private val loadProjectionCarPlaySafeAreaBottomUseCase: LoadProjectionCarPlaySafeAreaBottomUseCase,
     private val saveProjectionCarPlaySafeAreaBottomUseCase: SaveProjectionCarPlaySafeAreaBottomUseCase,
+    private val loadMediaSessionFixEnabledUseCase: LoadMediaSessionFixEnabledUseCase,
+    private val saveMediaSessionFixEnabledUseCase: SaveMediaSessionFixEnabledUseCase,
+    private val loadAudioFocusFixEnabledUseCase: LoadAudioFocusFixEnabledUseCase,
+    private val saveAudioFocusFixEnabledUseCase: SaveAudioFocusFixEnabledUseCase,
+    private val loadA2dpDisconnectFixEnabledUseCase: LoadA2dpDisconnectFixEnabledUseCase,
+    private val saveA2dpDisconnectFixEnabledUseCase: SaveA2dpDisconnectFixEnabledUseCase,
+    private val loadMediaSessionMetadataEnabledUseCase: LoadMediaSessionMetadataEnabledUseCase,
+    private val saveMediaSessionMetadataEnabledUseCase: SaveMediaSessionMetadataEnabledUseCase,
     private val selectProjectionDeviceUseCase: SelectProjectionDeviceUseCase,
     private val cancelProjectionDeviceConnectionUseCase: CancelProjectionDeviceConnectionUseCase,
     private val attachProjectionSurfaceUseCase: AttachProjectionSurfaceUseCase,
@@ -221,6 +237,30 @@ class CarPlayViewModel(
 
     fun saveClimatePanelEnabled(enabled: Boolean) {
         saveProjectionClimatePanelEnabledUseCase(enabled)
+    }
+
+    fun loadMediaSessionFixEnabled(): Boolean = loadMediaSessionFixEnabledUseCase()
+
+    fun saveMediaSessionFixEnabled(enabled: Boolean) {
+        saveMediaSessionFixEnabledUseCase(enabled)
+    }
+
+    fun loadAudioFocusFixEnabled(): Boolean = loadAudioFocusFixEnabledUseCase()
+
+    fun saveAudioFocusFixEnabled(enabled: Boolean) {
+        saveAudioFocusFixEnabledUseCase(enabled)
+    }
+
+    fun loadA2dpDisconnectFixEnabled(): Boolean = loadA2dpDisconnectFixEnabledUseCase()
+
+    fun saveA2dpDisconnectFixEnabled(enabled: Boolean) {
+        saveA2dpDisconnectFixEnabledUseCase(enabled)
+    }
+
+    fun loadMediaSessionMetadataEnabled(): Boolean = loadMediaSessionMetadataEnabledUseCase()
+
+    fun saveMediaSessionMetadataEnabled(enabled: Boolean) {
+        saveMediaSessionMetadataEnabledUseCase(enabled)
     }
 
     fun disconnectAndDisableAutoConnect() {

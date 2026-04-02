@@ -92,4 +92,14 @@
     <string name="settings_save">Сохранить</string>
     <string name="settings_save_reconnect">Сохранить и переподключить</string>
     <string name="settings_close">Закрыть</string>
+    <string name="settings_audio_fix_title">Bluetooth аудио</string>
+    <string name="settings_audio_fix_subtitle">Экспериментальные исправления прерывания CarPlay-аудио через Bluetooth.</string>
+    <string name="settings_audio_fix_media_session_toggle">MediaSession-фикс</string>
+    <string name="settings_audio_fix_media_session_note">Перехватывает AVRCP-команды Bluetooth, не давая iPhone переключить режим аудио при старте воспроизведения.</string>
+    <string name="settings_audio_fix_audio_focus_toggle">AudioFocus-фикс</string>
+    <string name="settings_audio_fix_audio_focus_note">Удерживает системный AudioFocus во время CarPlay, предотвращая попытки Android запустить A2DP-стриминг с iPhone.</string>
+    <string name="settings_audio_fix_a2dp_disconnect_toggle">A2DP-разрыв</string>
+    <string name="settings_audio_fix_a2dp_disconnect_note">При старте CarPlay-стриминга отключает Bluetooth A2DP от iPhone. Работает на Android 9/10 через системный API.</string>
+    <string name="settings_audio_fix_metadata_toggle">Метаданные трека</string>
+    <string name="settings_audio_fix_metadata_note">Передаёт название и исполнителя из CarPlay в MediaSession. BT-устройства получают реальный трек через AVRCP вместо пустой сессии.</string>
 </resources>

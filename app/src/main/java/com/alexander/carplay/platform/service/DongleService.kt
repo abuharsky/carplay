@@ -1,9 +1,6 @@
 package com.alexander.carplay.platform.service
 
 import android.app.Service
-import android.bluetooth.BluetoothA2dp
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothProfile
 import android.content.ComponentCallbacks2
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -28,6 +25,7 @@ import com.alexander.carplay.domain.model.ProjectionConnectionState
 import com.alexander.carplay.domain.model.ProjectionDeviceSettings
 import com.alexander.carplay.domain.model.ProjectionSessionSnapshot
 import com.alexander.carplay.domain.model.ProjectionUiEvent
+import com.alexander.carplay.domain.port.ProjectionSettingsPort
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,63 +45,14 @@ class DongleService : Service() {
     private lateinit var logStore: DiagnosticLogStore
     private lateinit var sessionManager: DongleSessionManager
     private lateinit var wakeLockController: ServiceWakeLockController
+    private lateinit var settingsPort: ProjectionSettingsPort
+    private lateinit var carPlayMediaSession: CarPlayMediaSession
+    private lateinit var audioFocusManager: CarPlayAudioFocusManager
+    private lateinit var a2dpDisconnectManager: CarPlayA2dpDisconnectManager
+    private lateinit var audioPlaybackObserver: CarPlayAudioPlaybackObserver
     private val binder = ServiceBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
-    private val audioStateReceiver = object : BroadcastReceiver() {
-        override fun onReceive(
-            context: Context,
-            intent: Intent,
-        ) {
-            when (intent.action) {
-                BluetoothA2dp.ACTION_PLAYING_STATE_CHANGED -> {
-                    val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
-                    val prevState = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1)
-                    val device = extractBluetoothDevice(intent)
-                    val deviceDesc = runCatching { device?.name }.getOrNull() ?: device?.address ?: "unknown"
-                    logStore.info(
-                        "AudioSys",
-                        "A2DP playing: ${describeA2dpPlayState(prevState)} → ${describeA2dpPlayState(state)} device=$deviceDesc",
-                    )
-                }
-                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
-                    val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
-                    val prevState = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1)
-                    val device = extractBluetoothDevice(intent)
-                    val deviceDesc = runCatching { device?.name }.getOrNull() ?: device?.address ?: "unknown"
-                    logStore.info(
-                        "AudioSys",
-                        "A2DP connection: ${describeBtProfileState(prevState)} → ${describeBtProfileState(state)} device=$deviceDesc",
-                    )
-                }
-                AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
-                    logStore.info("AudioSys", "Audio becoming noisy (Bluetooth audio disconnected or headphones unplugged)")
-                }
-            }
-        }
-
-        private fun extractBluetoothDevice(intent: Intent): BluetoothDevice? =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-            }
-
-        private fun describeA2dpPlayState(state: Int): String = when (state) {
-            BluetoothA2dp.STATE_PLAYING -> "PLAYING"
-            BluetoothA2dp.STATE_NOT_PLAYING -> "NOT_PLAYING"
-            else -> "UNKNOWN($state)"
-        }
-
-        private fun describeBtProfileState(state: Int): String = when (state) {
-            BluetoothProfile.STATE_CONNECTED -> "CONNECTED"
-            BluetoothProfile.STATE_CONNECTING -> "CONNECTING"
-            BluetoothProfile.STATE_DISCONNECTED -> "DISCONNECTED"
-            BluetoothProfile.STATE_DISCONNECTING -> "DISCONNECTING"
-            else -> "UNKNOWN($state)"
-        }
-    }
+    private var lastAudioFixSummary: String? = null
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(
@@ -143,8 +92,20 @@ class DongleService : Service() {
         val appContainer = (application as com.alexander.carplay.CarPlayApp).appContainer
         logStore = appContainer.logStore
         logStore.info(SOURCE, "onCreate | ${ProcessDiagnostics.describeCurrentProcess()}")
-        sessionManager = DongleSessionManager(this, logStore, appContainer.settingsPort)
+        settingsPort = appContainer.settingsPort
+        sessionManager = DongleSessionManager(this, logStore, settingsPort)
         wakeLockController = ServiceWakeLockController(this, logStore)
+        carPlayMediaSession = CarPlayMediaSession(this, logStore)
+        audioFocusManager = CarPlayAudioFocusManager(
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager,
+            logStore = logStore,
+        )
+        a2dpDisconnectManager = CarPlayA2dpDisconnectManager(this, logStore)
+        audioPlaybackObserver = CarPlayAudioPlaybackObserver(
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager,
+            logStore = logStore,
+        )
+        audioPlaybackObserver.start()
 
         ServiceNotificationFactory.ensureChannel(this)
         val notification = ServiceNotificationFactory.create(this)
@@ -163,14 +124,64 @@ class DongleService : Service() {
             )
         }
         registerUsbReceiver()
-        registerAudioStateReceiver()
         serviceScope.launch {
             sessionManager.state.collect { snapshot ->
                 wakeLockController.setActive(
                     active = snapshot.shouldHoldServiceWakeLock(),
                     reason = snapshot.state.name,
                 )
+                updateAudioFixState(snapshot.state)
             }
+        }
+        serviceScope.launch {
+            sessionManager.nowPlaying.collect { nowPlaying ->
+                if (nowPlaying != null &&
+                    carPlayMediaSession.isActive() &&
+                    settingsPort.isMediaSessionMetadataEnabled()
+                ) {
+                    carPlayMediaSession.updateMetadata(nowPlaying)
+                }
+            }
+        }
+    }
+
+    private fun updateAudioFixState(state: ProjectionConnectionState) {
+        val isStreaming = state == ProjectionConnectionState.STREAMING
+        val mediaSessionFixEnabled = settingsPort.isMediaSessionFixEnabled()
+        val audioFocusFixEnabled = settingsPort.isAudioFocusFixEnabled()
+        if (mediaSessionFixEnabled) {
+            carPlayMediaSession.activate()
+            if (isStreaming && settingsPort.isMediaSessionMetadataEnabled()) {
+                sessionManager.nowPlaying.value?.let { carPlayMediaSession.updateMetadata(it) }
+            } else {
+                carPlayMediaSession.clearMetadata()
+            }
+        } else {
+            carPlayMediaSession.deactivate()
+        }
+        if (isStreaming && audioFocusFixEnabled) {
+            audioFocusManager.requestFocus()
+        } else {
+            audioFocusManager.abandonFocus()
+        }
+        val a2dpDisconnectFixEnabled = settingsPort.isA2dpDisconnectFixEnabled()
+        if (isStreaming && a2dpDisconnectFixEnabled) {
+            a2dpDisconnectManager.onStreamingStarted()
+        } else {
+            a2dpDisconnectManager.onStreamingStopped()
+        }
+        val summary = buildString {
+            append("Audio fix state: projection=").append(state.name)
+            append(" streaming=").append(isStreaming)
+            append(" mediaSessionEnabled=").append(mediaSessionFixEnabled)
+            append(" mediaSessionActive=").append(carPlayMediaSession.isActive())
+            append(" audioFocusEnabled=").append(audioFocusFixEnabled)
+            append(" audioFocusHeld=").append(audioFocusManager.hasFocus())
+            append(" a2dpDisconnectEnabled=").append(a2dpDisconnectFixEnabled)
+        }
+        if (summary != lastAudioFixSummary) {
+            lastAudioFixSummary = summary
+            logStore.info(SOURCE, summary)
         }
     }
 
@@ -258,10 +269,13 @@ class DongleService : Service() {
         super.onDestroy()
         logStore.info(SOURCE, "onDestroy | ${ProcessDiagnostics.describeCurrentProcess()}")
         unregisterReceiver(usbReceiver)
-        unregisterReceiver(audioStateReceiver)
         wakeLockController.release("service destroyed")
         serviceScope.cancel()
         sessionManager.shutdown()
+        audioFocusManager.abandonFocus()
+        a2dpDisconnectManager.onStreamingStopped()
+        audioPlaybackObserver.stop()
+        carPlayMediaSession.release()
     }
 
     private fun registerUsbReceiver() {
@@ -276,20 +290,6 @@ class DongleService : Service() {
         } else {
             @Suppress("DEPRECATION")
             registerReceiver(usbReceiver, filter)
-        }
-    }
-
-    private fun registerAudioStateReceiver() {
-        val filter = IntentFilter().apply {
-            addAction(BluetoothA2dp.ACTION_PLAYING_STATE_CHANGED)
-            addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
-            addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(audioStateReceiver, filter, RECEIVER_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(audioStateReceiver, filter)
         }
     }
 
@@ -325,6 +325,7 @@ class DongleService : Service() {
 
         fun refreshRuntimeSettings() {
             sessionManager.refreshRuntimeSettings()
+            updateAudioFixState(sessionManager.state.value.state)
         }
 
         fun previewRuntimeSettings(settings: ProjectionDeviceSettings) {

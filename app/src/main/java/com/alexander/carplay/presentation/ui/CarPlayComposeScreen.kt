@@ -1326,6 +1326,14 @@ private fun ProjectionSettingsScreen(
     var workingAutoConnectEnabled by remember { mutableStateOf(loadedAutoConnectEnabled) }
     var savedClimatePanelEnabled by remember { mutableStateOf(climatePanelEnabled) }
     var workingClimatePanelEnabled by remember { mutableStateOf(climatePanelEnabled) }
+    val loadedMediaSessionFix = remember { viewModel.loadMediaSessionFixEnabled() }
+    val loadedAudioFocusFix = remember { viewModel.loadAudioFocusFixEnabled() }
+    val loadedA2dpDisconnectFix = remember { viewModel.loadA2dpDisconnectFixEnabled() }
+    val loadedMediaSessionMetadata = remember { viewModel.loadMediaSessionMetadataEnabled() }
+    var workingMediaSessionFix by remember { mutableStateOf(loadedMediaSessionFix) }
+    var workingAudioFocusFix by remember { mutableStateOf(loadedAudioFocusFix) }
+    var workingA2dpDisconnectFix by remember { mutableStateOf(loadedA2dpDisconnectFix) }
+    var workingMediaSessionMetadata by remember { mutableStateOf(loadedMediaSessionMetadata) }
     var showDiagnostics by rememberSaveable(deviceId, deviceName) { mutableStateOf(false) }
     var pendingRealtimePreview by remember(deviceId, deviceName) {
         mutableStateOf<ProjectionDeviceSettings?>(null)
@@ -1347,7 +1355,11 @@ private fun ProjectionSettingsScreen(
     val hasUnsavedChanges = workingSettings != savedSettings ||
         workingAdapterName != savedAdapterName ||
         workingAutoConnectEnabled != savedAutoConnectEnabled ||
-        workingClimatePanelEnabled != savedClimatePanelEnabled
+        workingClimatePanelEnabled != savedClimatePanelEnabled ||
+        workingMediaSessionFix != loadedMediaSessionFix ||
+        workingAudioFocusFix != loadedAudioFocusFix ||
+        workingA2dpDisconnectFix != loadedA2dpDisconnectFix ||
+        workingMediaSessionMetadata != loadedMediaSessionMetadata
 
     LaunchedEffect(deviceId, deviceName) {
         val adapterName = viewModel.loadAdapterName()
@@ -1381,6 +1393,7 @@ private fun ProjectionSettingsScreen(
         modifier = modifier.fillMaxSize(),
     ) {
         val climateCardWidth = (maxWidth * 0.18f).coerceIn(320.dp, 400.dp)
+        val audioFixCardWidth = (maxWidth * 0.18f).coerceIn(320.dp, 400.dp)
         val seatAutomationCardWidth = (maxWidth * 0.24f).coerceIn(420.dp, 540.dp)
         val adapterCardWidth = (maxWidth * 0.19f).coerceIn(340.dp, 460.dp)
         val micCardWidth = (maxWidth * 0.20f).coerceIn(320.dp, 420.dp)
@@ -1459,6 +1472,10 @@ private fun ProjectionSettingsScreen(
                             viewModel.saveAdapterName(workingAdapterName)
                             viewModel.saveAutoConnectEnabled(workingAutoConnectEnabled)
                             viewModel.saveClimatePanelEnabled(workingClimatePanelEnabled)
+                            viewModel.saveMediaSessionFixEnabled(workingMediaSessionFix)
+                            viewModel.saveAudioFocusFixEnabled(workingAudioFocusFix)
+                            viewModel.saveA2dpDisconnectFixEnabled(workingA2dpDisconnectFix)
+                            viewModel.saveMediaSessionMetadataEnabled(workingMediaSessionMetadata)
                             savedAdapterName = workingAdapterName
                             savedAutoConnectEnabled = workingAutoConnectEnabled
                             savedClimatePanelEnabled = workingClimatePanelEnabled
@@ -1498,6 +1515,20 @@ private fun ProjectionSettingsScreen(
                                     .fillMaxHeight(),
                                 enabled = workingClimatePanelEnabled,
                                 onEnabledChanged = { workingClimatePanelEnabled = it },
+                            )
+
+                            AudioFixSection(
+                                modifier = Modifier
+                                    .width(audioFixCardWidth)
+                                    .fillMaxHeight(),
+                                mediaSessionFixEnabled = workingMediaSessionFix,
+                                onMediaSessionFixChanged = { workingMediaSessionFix = it },
+                                audioFocusFixEnabled = workingAudioFocusFix,
+                                onAudioFocusFixChanged = { workingAudioFocusFix = it },
+                                a2dpDisconnectFixEnabled = workingA2dpDisconnectFix,
+                                onA2dpDisconnectFixChanged = { workingA2dpDisconnectFix = it },
+                                mediaSessionMetadataEnabled = workingMediaSessionMetadata,
+                                onMediaSessionMetadataChanged = { workingMediaSessionMetadata = it },
                             )
 
                             SeatAutoComfortSection(
@@ -1818,6 +1849,58 @@ private fun ClimatePanelSection(
                 title = stringResource(id = R.string.settings_climate_panel_toggle),
                 checked = enabled,
                 onCheckedChange = onEnabledChanged,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AudioFixSection(
+    mediaSessionFixEnabled: Boolean,
+    onMediaSessionFixChanged: (Boolean) -> Unit,
+    audioFocusFixEnabled: Boolean,
+    onAudioFocusFixChanged: (Boolean) -> Unit,
+    a2dpDisconnectFixEnabled: Boolean,
+    onA2dpDisconnectFixChanged: (Boolean) -> Unit,
+    mediaSessionMetadataEnabled: Boolean,
+    onMediaSessionMetadataChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SettingsSectionCard(
+        modifier = modifier,
+        title = stringResource(id = R.string.settings_audio_fix_title),
+        subtitle = stringResource(id = R.string.settings_audio_fix_subtitle),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            AdapterToggleRow(
+                title = stringResource(id = R.string.settings_audio_fix_media_session_toggle),
+                subtitle = stringResource(id = R.string.settings_audio_fix_media_session_note),
+                checked = mediaSessionFixEnabled,
+                onCheckedChange = onMediaSessionFixChanged,
+            )
+            AdapterToggleRow(
+                title = stringResource(id = R.string.settings_audio_fix_audio_focus_toggle),
+                subtitle = stringResource(id = R.string.settings_audio_fix_audio_focus_note),
+                checked = audioFocusFixEnabled,
+                onCheckedChange = onAudioFocusFixChanged,
+            )
+            AdapterToggleRow(
+                title = stringResource(id = R.string.settings_audio_fix_a2dp_disconnect_toggle),
+                subtitle = stringResource(id = R.string.settings_audio_fix_a2dp_disconnect_note),
+                checked = a2dpDisconnectFixEnabled,
+                onCheckedChange = onA2dpDisconnectFixChanged,
+            )
+            AdapterToggleRow(
+                title = stringResource(id = R.string.settings_audio_fix_metadata_toggle),
+                subtitle = stringResource(id = R.string.settings_audio_fix_metadata_note),
+                checked = mediaSessionMetadataEnabled,
+                onCheckedChange = onMediaSessionMetadataChanged,
             )
         }
     }

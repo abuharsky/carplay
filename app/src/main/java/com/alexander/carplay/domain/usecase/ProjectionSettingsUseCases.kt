@@ -62,3 +62,51 @@ class SaveProjectionCarPlaySafeAreaBottomUseCase(
 ) {
     operator fun invoke(bottomDp: Int) = settingsPort.setCarPlaySafeAreaBottomDp(bottomDp)
 }
+
+class LoadMediaSessionFixEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(): Boolean = settingsPort.isMediaSessionFixEnabled()
+}
+
+class SaveMediaSessionFixEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(enabled: Boolean) = settingsPort.setMediaSessionFixEnabled(enabled)
+}
+
+class LoadAudioFocusFixEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(): Boolean = settingsPort.isAudioFocusFixEnabled()
+}
+
+class SaveAudioFocusFixEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(enabled: Boolean) = settingsPort.setAudioFocusFixEnabled(enabled)
+}
+
+class LoadA2dpDisconnectFixEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(): Boolean = settingsPort.isA2dpDisconnectFixEnabled()
+}
+
+class SaveA2dpDisconnectFixEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(enabled: Boolean) = settingsPort.setA2dpDisconnectFixEnabled(enabled)
+}
+
+class LoadMediaSessionMetadataEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(): Boolean = settingsPort.isMediaSessionMetadataEnabled()
+}
+
+class SaveMediaSessionMetadataEnabledUseCase(
+    private val settingsPort: ProjectionSettingsPort,
+) {
+    operator fun invoke(enabled: Boolean) = settingsPort.setMediaSessionMetadataEnabled(enabled)
+}

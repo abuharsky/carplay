@@ -29,6 +29,14 @@ import com.alexander.carplay.domain.usecase.SaveProjectionAutoConnectUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionClimatePanelEnabledUseCase
 import com.alexander.carplay.domain.usecase.LoadProjectionCarPlaySafeAreaBottomUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionCarPlaySafeAreaBottomUseCase
+import com.alexander.carplay.domain.usecase.LoadMediaSessionFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveMediaSessionFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.LoadAudioFocusFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveAudioFocusFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.LoadA2dpDisconnectFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveA2dpDisconnectFixEnabledUseCase
+import com.alexander.carplay.domain.usecase.LoadMediaSessionMetadataEnabledUseCase
+import com.alexander.carplay.domain.usecase.SaveMediaSessionMetadataEnabledUseCase
 import com.alexander.carplay.domain.usecase.SaveProjectionDeviceSettingsUseCase
 import com.alexander.carplay.domain.usecase.SendProjectionMotionUseCase
 import com.alexander.carplay.domain.usecase.SelectProjectionDeviceUseCase
@@ -73,6 +81,14 @@ class AppContainer(application: Application) {
     val saveProjectionClimatePanelEnabledUseCase = SaveProjectionClimatePanelEnabledUseCase(settingsPort)
     val loadProjectionCarPlaySafeAreaBottomUseCase = LoadProjectionCarPlaySafeAreaBottomUseCase(settingsPort)
     val saveProjectionCarPlaySafeAreaBottomUseCase = SaveProjectionCarPlaySafeAreaBottomUseCase(settingsPort)
+    val loadMediaSessionFixEnabledUseCase = LoadMediaSessionFixEnabledUseCase(settingsPort)
+    val saveMediaSessionFixEnabledUseCase = SaveMediaSessionFixEnabledUseCase(settingsPort)
+    val loadAudioFocusFixEnabledUseCase = LoadAudioFocusFixEnabledUseCase(settingsPort)
+    val saveAudioFocusFixEnabledUseCase = SaveAudioFocusFixEnabledUseCase(settingsPort)
+    val loadA2dpDisconnectFixEnabledUseCase = LoadA2dpDisconnectFixEnabledUseCase(settingsPort)
+    val saveA2dpDisconnectFixEnabledUseCase = SaveA2dpDisconnectFixEnabledUseCase(settingsPort)
+    val loadMediaSessionMetadataEnabledUseCase = LoadMediaSessionMetadataEnabledUseCase(settingsPort)
+    val saveMediaSessionMetadataEnabledUseCase = SaveMediaSessionMetadataEnabledUseCase(settingsPort)
     val startProjectionServiceUseCase = StartProjectionServiceUseCase(sessionPort)
     val startUsbSessionUseCase = StartUsbSessionUseCase(sessionPort)
     val startReplaySessionUseCase = StartReplaySessionUseCase(sessionPort)

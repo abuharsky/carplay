@@ -30,6 +30,10 @@ class SharedPreferencesProjectionSettingsStore(
         private const val KEY_CARPLAY_SAFE_AREA_BOTTOM_DP = "carplay_safe_area_bottom_dp"
         private const val KEY_PREFIX = "device:"
         private const val KEY_DEVICE_NAME_CACHE_PREFIX = "device_name:"
+        private const val KEY_MEDIA_SESSION_FIX_ENABLED = "bt_media_session_fix_enabled"
+        private const val KEY_AUDIO_FOCUS_FIX_ENABLED = "bt_audio_focus_fix_enabled"
+        private const val KEY_A2DP_DISCONNECT_FIX_ENABLED = "bt_a2dp_disconnect_fix_enabled"
+        private const val KEY_MEDIA_SESSION_METADATA_ENABLED = "bt_media_session_metadata_enabled"
         private const val DEFAULT_ADAPTER_NAME_PREFIX = "Carlink-"
         private const val DEFAULT_ADAPTER_NAME_DIGITS = 4
         private const val MAX_ADAPTER_NAME_LENGTH = 16
@@ -123,6 +127,34 @@ class SharedPreferencesProjectionSettingsStore(
         prefs.edit()
             .putString(KEY_DEVICE_NAME_CACHE_PREFIX + normalizedId, normalizedName)
             .apply()
+    }
+
+    override fun isMediaSessionFixEnabled(): Boolean =
+        prefs.getBoolean(KEY_MEDIA_SESSION_FIX_ENABLED, false)
+
+    override fun setMediaSessionFixEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_MEDIA_SESSION_FIX_ENABLED, enabled).apply()
+    }
+
+    override fun isAudioFocusFixEnabled(): Boolean =
+        prefs.getBoolean(KEY_AUDIO_FOCUS_FIX_ENABLED, true)
+
+    override fun setAudioFocusFixEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUDIO_FOCUS_FIX_ENABLED, enabled).apply()
+    }
+
+    override fun isA2dpDisconnectFixEnabled(): Boolean =
+        prefs.getBoolean(KEY_A2DP_DISCONNECT_FIX_ENABLED, false)
+
+    override fun setA2dpDisconnectFixEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_A2DP_DISCONNECT_FIX_ENABLED, enabled).apply()
+    }
+
+    override fun isMediaSessionMetadataEnabled(): Boolean =
+        prefs.getBoolean(KEY_MEDIA_SESSION_METADATA_ENABLED, false)
+
+    override fun setMediaSessionMetadataEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_MEDIA_SESSION_METADATA_ENABLED, enabled).apply()
     }
 
     private fun normalizeDeviceId(deviceId: String?): String {
